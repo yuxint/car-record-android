@@ -1,0 +1,30 @@
+# Build outputs (root + all modules)
+/build/
+**/build/
+
+# Gradle / Kotlin local caches
+.gradle/
+.gradle-local/
+.kotlin/
+
+# Android Studio / IntelliJ local files
+.idea/
+*.iml
+
+# Local SDK and environment config
+local.properties
+
+# Native build artifacts
+.cxx/
+.externalNativeBuild/
+
+# Signing files
+*.jks
+*.keystore
+
+# Logs
+*.log
+
+# OS temp files
+.DS_Store
+Thumbs.db
