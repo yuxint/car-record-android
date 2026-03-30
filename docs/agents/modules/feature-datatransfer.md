@@ -10,7 +10,7 @@
 
 ## 仅当以下改动才读
 
-- 改备份结构：补读 `docs/agents/data-model.md` 与 `docs/agents/scripts-reference.md`。
+- 改备份结构：补读 `docs/agents/data-model.md`。
 - 改恢复策略（清空再导入等）：补读 `docs/agents/business-constraints.md`。
 
 ## 改完自检 3 条

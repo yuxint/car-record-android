@@ -3,6 +3,7 @@ package com.tx.carrecord.feature.addcar.data
 import androidx.room.withTransaction
 import com.tx.carrecord.core.common.RepositoryError
 import com.tx.carrecord.core.common.RepositoryResult
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import com.tx.carrecord.core.database.dao.CarRecordDao
 import com.tx.carrecord.core.database.error.RoomRepositoryErrorMapper
 import com.tx.carrecord.core.database.model.CarEntity
@@ -68,23 +69,6 @@ data class SaveCarItemOptionsRequest(
     val disabledItemIDsRaw: String,
 )
 
-data class DefaultItemDefinition(
-    val key: String,
-    val defaultName: String,
-    val mileageInterval: Int?,
-    val monthInterval: Int?,
-    val remindByMileage: Boolean,
-    val remindByTime: Boolean,
-    val warningStartPercent: Int,
-    val dangerStartPercent: Int,
-)
-
-data class ModelItemDefaults(
-    val definitions: List<DefaultItemDefinition>,
-    val warningStartPercent: Int,
-    val dangerStartPercent: Int,
-)
-
 interface CarRepository {
     suspend fun listCars(): RepositoryResult<List<CarProfileSnapshot>>
 
@@ -105,7 +89,7 @@ interface CarRepository {
     fun modelItemDefaults(
         brand: String,
         modelName: String,
-    ): ModelItemDefaults
+    ): MaintenanceItemConfig.ModelConfig
 
     suspend fun upsertCar(request: CarUpsertRequest): RepositoryResult<CarMutationResult>
 
@@ -312,7 +296,7 @@ class RoomCarRepository @Inject constructor(
                     dao.deleteItemOptionById(option.id)
                 }
 
-                val normalizedDisabledRaw = CarManagementRules.normalizeDisabledItemIDsRaw(request.disabledItemIDsRaw)
+                val normalizedDisabledRaw = MaintenanceItemConfig.normalizeItemIDsRaw(request.disabledItemIDsRaw)
                 dao.updateCarDisabledItemIDsRaw(
                     carId = existingCar.id,
                     disabledItemIDsRaw = normalizedDisabledRaw,
@@ -354,7 +338,7 @@ class RoomCarRepository @Inject constructor(
 
             val modelDefaults = modelItemDefaults(brand = brand, modelName = modelName)
             val nowEpoch = LocalDateTime.now().atZone(zoneId).toEpochSecond()
-            val entities = modelDefaults.definitions.map { definition ->
+            val entities = modelDefaults.defaultItemDefinitions.map { definition ->
                 MaintenanceItemOptionEntity(
                     id = UUID.randomUUID().toString(),
                     name = definition.defaultName,
@@ -385,48 +369,8 @@ class RoomCarRepository @Inject constructor(
     override fun modelItemDefaults(
         brand: String,
         modelName: String,
-    ): ModelItemDefaults {
-        val normalizedBrand = brand.trim()
-        val normalizedModel = modelName.trim()
-        val warning = 100
-        val danger = 125
-
-        val civicDefinitions = listOf(
-            DefaultItemDefinition("fuel_cleaner", "汽油发动机清洁剂（燃油宝）", 5000, null, true, false, warning, danger),
-            DefaultItemDefinition("engine_oil", "机油、机滤", 5000, 6, true, true, warning, danger),
-            DefaultItemDefinition("ac_filter", "空调滤芯", 20_000, 12, true, true, warning, danger),
-            DefaultItemDefinition("air_filter", "空气滤芯", 20_000, null, true, false, warning, danger),
-            DefaultItemDefinition("transmission_oil", "变速箱油", 40_000, 24, true, true, warning, danger),
-            DefaultItemDefinition("brake_fluid", "制动液（刹车油）", null, 36, false, true, warning, danger),
-            DefaultItemDefinition("spark_plug", "火花塞", 100_000, null, true, false, warning, danger),
-            DefaultItemDefinition("drive_belt", "检查传动皮带", 40_000, 24, true, true, warning, danger),
-            DefaultItemDefinition("valve_clearance", "检查气门间隙", 120_000, null, true, false, warning, danger),
-            DefaultItemDefinition("brake", "检查制动器（刹车）", 120_000, null, true, false, warning, danger),
-            DefaultItemDefinition("antifreeze", "冷却液（防冻液）", 200_000, 120, true, true, warning, danger),
-            DefaultItemDefinition("gas_filter", "汽油滤芯", 140_000, null, true, false, warning, danger),
-            DefaultItemDefinition("tire_rotation", "轮胎换位", 10_000, null, true, false, warning, danger),
-        )
-
-        val sylphyDefinitions = listOf(
-            DefaultItemDefinition("engine_oil", "机油", 10_000, 6, true, true, warning, danger),
-            DefaultItemDefinition("ac_filter", "空调滤芯", 20_000, 12, true, true, warning, danger),
-            DefaultItemDefinition("air_filter", "空气滤芯", 20_000, null, true, false, warning, danger),
-            DefaultItemDefinition("transmission_oil", "变速箱油", null, 24, false, true, warning, danger),
-            DefaultItemDefinition("brake_fluid", "刹车油", null, 36, false, true, warning, danger),
-        )
-
-        val definitions = when {
-            normalizedBrand == "本田" && normalizedModel == "22款思域" -> civicDefinitions
-            normalizedBrand == "日产" && normalizedModel == "22款轩逸" -> sylphyDefinitions
-            else -> civicDefinitions
-        }
-
-        return ModelItemDefaults(
-            definitions = definitions,
-            warningStartPercent = warning,
-            dangerStartPercent = danger,
-        )
-    }
+    ): MaintenanceItemConfig.ModelConfig =
+        MaintenanceItemConfig.modelConfig(brand = brand, modelName = modelName)
 
     override suspend fun upsertCar(request: CarUpsertRequest): RepositoryResult<CarMutationResult> {
         return runCatching {

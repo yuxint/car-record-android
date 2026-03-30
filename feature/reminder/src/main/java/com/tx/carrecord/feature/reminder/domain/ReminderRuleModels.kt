@@ -1,5 +1,6 @@
 package com.tx.carrecord.feature.reminder.domain
 
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig.ProgressColorLevel
 import java.time.LocalDate
 
 data class ReminderCarSnapshot(
@@ -35,11 +36,5 @@ data class ReminderRow(
     val displayProgress: Double,
     val progressText: String,
     val detailTexts: List<String>,
-    val progressColorLevel: ReminderProgressColorLevel,
+    val progressColorLevel: ProgressColorLevel,
 )
-
-enum class ReminderProgressColorLevel {
-    NORMAL,
-    WARNING,
-    DANGER,
-}

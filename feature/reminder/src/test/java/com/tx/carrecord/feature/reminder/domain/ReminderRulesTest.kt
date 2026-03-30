@@ -1,6 +1,7 @@
 package com.tx.carrecord.feature.reminder.domain
 
 import java.time.LocalDate
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig.ProgressColorLevel
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -37,7 +38,7 @@ class ReminderRulesTest {
         assertEquals(1.0, row.rawProgress)
         assertEquals(180.0, row.duePriority)
         assertEquals("100%", row.progressText)
-        assertEquals(ReminderProgressColorLevel.WARNING, row.progressColorLevel)
+        assertEquals(ProgressColorLevel.WARNING, row.progressColorLevel)
         assertContains(row.detailTexts, "按里程提醒：距离下次约3000公里")
         assertContains(row.detailTexts, "按时间提醒：今日到期")
     }
@@ -67,7 +68,7 @@ class ReminderRulesTest {
         assertEquals(0.24, row.rawProgress)
         assertEquals(5_000.0, row.duePriority)
         assertEquals("24%", row.progressText)
-        assertEquals(ReminderProgressColorLevel.NORMAL, row.progressColorLevel)
+        assertEquals(ProgressColorLevel.NORMAL, row.progressColorLevel)
         assertContains(row.detailTexts, "按里程提醒：距离下次约3800公里")
     }
 
@@ -124,7 +125,7 @@ class ReminderRulesTest {
         assertEquals(2.5, row.rawProgress)
         assertEquals(1.0, row.displayProgress)
         assertEquals("250%", row.progressText)
-        assertEquals(ReminderProgressColorLevel.DANGER, row.progressColorLevel)
+        assertEquals(ProgressColorLevel.DANGER, row.progressColorLevel)
     }
 
     @Test

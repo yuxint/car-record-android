@@ -1,9 +1,11 @@
 package com.tx.carrecord.feature.addcar.domain
 
+import com.tx.carrecord.feature.addcar.data.CarItemOptionSnapshot
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import java.time.LocalDate
 
 class CarManagementRulesTest {
     @Test
@@ -160,5 +162,170 @@ class CarManagementRulesTest {
         val success = assertIs<DisabledItemIsolationDecision.Success>(result)
         assertEquals("item-b|item-c", success.plan.disabledItemIDsRawByCarId["car-1"])
         assertEquals("item-x|item-y", success.plan.disabledItemIDsRawByCarId["car-2"])
+    }
+
+    @Test
+    fun sortItemOptionsByDefaultOrder_已知项按车型顺序未知项保持原始顺序() {
+        val result = MaintenanceItemConfig.sortItemOptionsByDefaultOrder(
+            options = listOf(
+                CarItemOptionSnapshot(
+                    id = "option-1",
+                    name = "未知A",
+                    ownerCarId = "car-1",
+                    isDefault = false,
+                    catalogKey = "custom-a",
+                    remindByMileage = true,
+                    mileageInterval = 5000,
+                    remindByTime = false,
+                    monthInterval = 0,
+                    warningStartPercent = 100,
+                    dangerStartPercent = 125,
+                    createdAtEpochSeconds = 1L,
+                ),
+                CarItemOptionSnapshot(
+                    id = "option-2",
+                    name = "机油",
+                    ownerCarId = "car-1",
+                    isDefault = true,
+                    catalogKey = "engine_oil",
+                    remindByMileage = true,
+                    mileageInterval = 5000,
+                    remindByTime = true,
+                    monthInterval = 6,
+                    warningStartPercent = 100,
+                    dangerStartPercent = 125,
+                    createdAtEpochSeconds = 2L,
+                ),
+                CarItemOptionSnapshot(
+                    id = "option-3",
+                    name = "未知B",
+                    ownerCarId = "car-1",
+                    isDefault = false,
+                    catalogKey = null,
+                    remindByMileage = true,
+                    mileageInterval = 5000,
+                    remindByTime = false,
+                    monthInterval = 0,
+                    warningStartPercent = 100,
+                    dangerStartPercent = 125,
+                    createdAtEpochSeconds = 3L,
+                ),
+            ),
+            defaultOrderByKey = mapOf(
+                "engine_oil" to 0,
+                "ac_filter" to 1,
+            ),
+            catalogKeySelector = { it.catalogKey },
+        )
+
+        assertEquals(listOf("option-2", "option-1", "option-3"), result.map { it.id })
+    }
+
+    @Test
+    fun normalizeItemIDsRaw_应去重并清理空白() {
+        val normalized = MaintenanceItemConfig.normalizeItemIDsRaw(" item-a | item-b | item-a || item-c ")
+
+        assertEquals("item-a|item-b|item-c", normalized)
+    }
+
+    @Test
+    fun reminderSummaryText_无规则时显示未设置_有规则时合并摘要() {
+        val emptySummary = MaintenanceItemConfig.reminderSummaryText(
+            option = CarItemOptionSnapshot(
+                id = "option-0",
+                name = "测试",
+                ownerCarId = "car-1",
+                isDefault = true,
+                catalogKey = "test",
+                remindByMileage = false,
+                mileageInterval = 0,
+                remindByTime = false,
+                monthInterval = 0,
+                warningStartPercent = 100,
+                dangerStartPercent = 125,
+                createdAtEpochSeconds = 0L,
+            ),
+            remindByMileageSelector = { it.remindByMileage },
+            mileageIntervalSelector = { it.mileageInterval },
+            remindByTimeSelector = { it.remindByTime },
+            monthIntervalSelector = { it.monthInterval },
+            mileageTextFormatter = { "${it}公里" },
+        )
+        val summary = MaintenanceItemConfig.reminderSummaryText(
+            option = CarItemOptionSnapshot(
+                id = "option-1",
+                name = "测试",
+                ownerCarId = "car-1",
+                isDefault = true,
+                catalogKey = "test",
+                remindByMileage = true,
+                mileageInterval = 5000,
+                remindByTime = true,
+                monthInterval = 6,
+                warningStartPercent = 100,
+                dangerStartPercent = 125,
+                createdAtEpochSeconds = 0L,
+            ),
+            remindByMileageSelector = { it.remindByMileage },
+            mileageIntervalSelector = { it.mileageInterval },
+            remindByTimeSelector = { it.remindByTime },
+            monthIntervalSelector = { it.monthInterval },
+            mileageTextFormatter = { "${it}公里" },
+        )
+
+        assertEquals("未设置", emptySummary)
+        assertEquals("5000公里 / 0.5年", summary)
+    }
+
+    @Test
+    fun filterDisabledOptions_默认过滤禁用项_可按需保留禁用项() {
+        val options = listOf(
+            CarItemOptionSnapshot(
+                id = "option-1",
+                name = "机油",
+                ownerCarId = "car-1",
+                isDefault = true,
+                catalogKey = "engine_oil",
+                remindByMileage = true,
+                mileageInterval = 5000,
+                remindByTime = true,
+                monthInterval = 6,
+                warningStartPercent = 100,
+                dangerStartPercent = 125,
+                createdAtEpochSeconds = 0L,
+            ),
+            CarItemOptionSnapshot(
+                id = "option-2",
+                name = "空调滤芯",
+                ownerCarId = "car-1",
+                isDefault = true,
+                catalogKey = "ac_filter",
+                remindByMileage = true,
+                mileageInterval = 20000,
+                remindByTime = true,
+                monthInterval = 12,
+                warningStartPercent = 100,
+                dangerStartPercent = 125,
+                createdAtEpochSeconds = 0L,
+            ),
+        )
+
+        val filtered = MaintenanceItemConfig.filterDisabledOptions(
+            options = options,
+            disabledItemIDsRaw = "option-2",
+            includeDisabled = false,
+            itemIDSelector = { it.id },
+        )
+
+        assertEquals(listOf("option-1"), filtered.map { it.id })
+        assertEquals(
+            listOf("option-1", "option-2"),
+            MaintenanceItemConfig.filterDisabledOptions(
+                options = options,
+                disabledItemIDsRaw = "option-2",
+                includeDisabled = true,
+                itemIDSelector = { it.id },
+            ).map { it.id },
+        )
     }
 }

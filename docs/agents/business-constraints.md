@@ -11,7 +11,6 @@
 
 ## 编码约定（最小）
 
-- 优先保持现有架构，不要无必要引入网络层、新状态管理或额外抽象层。
 - 目录组织遵循 `app/core/feature` 分层，职责不要跨层。
 - 数据模型/持久化变更请同步参考：`docs/agents/data-model.md`。
 - 涉及存储或仓储返回值时，优先复用 `RepositoryResult` 与现有错误映射风格。
@@ -21,3 +20,4 @@
 
 - 数据模型与持久化：`docs/agents/data-model.md`
 - 运行时上下文：`docs/agents/runtime-contexts.md`
+

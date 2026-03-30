@@ -1,8 +1,9 @@
 package com.tx.carrecord.feature.addcar.domain
 
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
+
 object CarManagementRules {
     private const val MODEL_KEY_SEPARATOR: Char = '|'
-    private const val ITEM_ID_SEPARATOR: Char = '|'
 
     fun modelKey(brand: String, modelName: String): String {
         val normalizedBrand = normalizeBrand(brand)
@@ -39,7 +40,7 @@ object CarManagementRules {
                 normalizedBrand = normalizedBrand,
                 normalizedModelName = normalizedModelName,
                 normalizedModelKey = normalizedModelKey,
-                normalizedDisabledItemIDsRaw = normalizeDisabledItemIDsRaw(input.disabledItemIDsRaw),
+                normalizedDisabledItemIDsRaw = MaintenanceItemConfig.normalizeItemIDsRaw(input.disabledItemIDsRaw),
             ),
         )
     }
@@ -102,29 +103,10 @@ object CarManagementRules {
             } else {
                 car.disabledItemIDsRaw
             }
-            car.id to normalizeDisabledItemIDsRaw(raw)
+            car.id to MaintenanceItemConfig.normalizeItemIDsRaw(raw)
         }
         return DisabledItemIsolationDecision.Success(
             plan = DisabledItemIsolationPlan(disabledItemIDsRawByCarId = disabledRawByCar),
         )
     }
-
-    fun parseDisabledItemIDs(raw: String): List<String> {
-        if (raw.isBlank()) return emptyList()
-
-        val seen = mutableSetOf<String>()
-        val unique = mutableListOf<String>()
-        for (itemId in raw.split(ITEM_ID_SEPARATOR).map { it.trim() }) {
-            if (itemId.isEmpty()) continue
-            if (seen.add(itemId)) {
-                unique += itemId
-            }
-        }
-        return unique
-    }
-
-    fun joinDisabledItemIDs(itemIds: List<String>): String =
-        itemIds.joinToString(separator = ITEM_ID_SEPARATOR.toString())
-
-    fun normalizeDisabledItemIDsRaw(raw: String): String = joinDisabledItemIDs(parseDisabledItemIDs(raw))
 }

@@ -1,5 +1,6 @@
 package com.tx.carrecord.feature.datatransfer.domain
 
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -7,8 +8,6 @@ import kotlinx.serialization.json.JsonObject
 import java.util.UUID
 
 object MyDataTransferRules {
-    private const val ITEM_ID_SEPARATOR: Char = '|'
-
     val jsonCodec: Json = Json {
         prettyPrint = true
         explicitNulls = false
@@ -323,7 +322,7 @@ object MyDataTransferRules {
                     record = record.copy(id = normalizedRecordId),
                     normalizedDate = normalizedDate,
                     mappedItemIds = mappedItemIds,
-                    mappedItemIDsRaw = mappedItemIds.joinToString(ITEM_ID_SEPARATOR.toString()),
+                    mappedItemIDsRaw = MaintenanceItemConfig.joinItemIDs(mappedItemIds),
                 )
             }
 
@@ -344,18 +343,8 @@ object MyDataTransferRules {
     }
 
     private fun parseItemIDsRaw(raw: String): List<String> {
-        if (raw.isBlank()) return emptyList()
-
-        val unique = mutableListOf<String>()
-        val seen = mutableSetOf<String>()
-        for (token in raw.split(ITEM_ID_SEPARATOR)) {
-            val normalized = token.trim().uppercase()
-            if (normalized.isEmpty()) continue
-            if (seen.add(normalized)) {
-                unique += normalized
-            }
-        }
-        return unique
+        return MaintenanceItemConfig.parseItemIDs(raw)
+            .map { it.uppercase() }
     }
 
     private fun normalizeUuid(value: String): String = UUID.fromString(value.trim()).toString().uppercase()

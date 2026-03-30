@@ -1,6 +1,5 @@
 package com.tx.carrecord.feature.addcar.ui
 
-import android.widget.NumberPicker
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,27 +7,29 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -38,14 +39,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.common.RepositoryResult
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.feature.addcar.data.CarItemOptionSnapshot
 import com.tx.carrecord.feature.addcar.data.CarItemOptionUpsertDraft
@@ -71,6 +74,12 @@ private fun addCarModelOptions(brand: String): List<String> = when (brand) {
     "本田" -> listOf("22款思域", "23款CR-V", "24款雅阁")
     "日产" -> listOf("22款轩逸", "23款奇骏", "24款天籁")
     else -> listOf("22款思域")
+}
+
+private fun carModelKey(brand: String, modelName: String): String {
+    val normalizedBrand = brand.trim()
+    val normalizedModel = modelName.trim()
+    return "$normalizedBrand|$normalizedModel"
 }
 
 private data class MileageSegments(
@@ -133,6 +142,10 @@ data class AddCarUiState(
     val activeCarEditor: CarEditorState? = null,
     val activeItemConfigEditor: ItemConfigEditorState? = null,
     val pendingDeleteCar: CarProfileSnapshot? = null,
+    val editorValidationMessage: String? = null,
+    val isEditorValidationAlertPresented: Boolean = false,
+    val editorSaveErrorMessage: String? = null,
+    val isEditorSaveErrorAlertPresented: Boolean = false,
     val message: String? = null,
 )
 
@@ -187,27 +200,46 @@ class AddCarViewModel @Inject constructor(
             val defaultModel = addCarModelOptions(defaultBrand).firstOrNull().orEmpty()
             val now = appDateContext.now()
             _uiState.value = _uiState.value.copy(
-                activeCarEditor = CarEditorState(
+                activeCarEditor = buildCarEditorState(
+                    editingCar = null,
+                    existingOptions = emptyList(),
+                    purchaseDate = now,
                     brand = defaultBrand,
                     modelName = defaultModel,
                     mileageWan = 0,
                     mileageQian = 0,
                     mileageBai = 0,
-                    purchaseDate = now,
-                    itemDrafts = buildEditorDrafts(
-                        carId = null,
-                        brand = defaultBrand,
-                        modelName = defaultModel,
-                        disabledItemIDsRaw = "",
-                        existingOptions = emptyList(),
-                    ),
+                    disabledItemIDsRaw = "",
                 ),
+                editorValidationMessage = null,
+                isEditorValidationAlertPresented = false,
+                editorSaveErrorMessage = null,
+                isEditorSaveErrorAlertPresented = false,
                 message = null,
             )
         }
     }
 
     fun openEditCarEditor(car: CarProfileSnapshot) {
+        val segments = mileageSegmentsFromValue(car.mileage)
+        _uiState.value = _uiState.value.copy(
+            activeCarEditor = buildCarEditorState(
+                editingCar = car,
+                existingOptions = emptyList(),
+                purchaseDate = car.purchaseDate,
+                brand = car.brand,
+                modelName = car.modelName,
+                mileageWan = segments.wan,
+                mileageQian = segments.qian,
+                mileageBai = segments.bai,
+                disabledItemIDsRaw = car.disabledItemIDsRaw,
+            ),
+            editorValidationMessage = null,
+            isEditorValidationAlertPresented = false,
+            editorSaveErrorMessage = null,
+            isEditorSaveErrorAlertPresented = false,
+            message = null,
+        )
         viewModelScope.launch {
             val existingOptions = when (val optionsResult = carRepository.listItemOptionsByCarId(car.id)) {
                 is RepositoryResult.Success -> optionsResult.value
@@ -216,17 +248,10 @@ class AddCarViewModel @Inject constructor(
                     return@launch
                 }
             }
-            val segments = mileageSegmentsFromValue(car.mileage)
+            val currentEditor = _uiState.value.activeCarEditor
+            if (currentEditor?.editingCarId != car.id) return@launch
             _uiState.value = _uiState.value.copy(
-                activeCarEditor = CarEditorState(
-                    editingCarId = car.id,
-                    brand = car.brand,
-                    modelName = car.modelName,
-                    mileageWan = segments.wan,
-                    mileageQian = segments.qian,
-                    mileageBai = segments.bai,
-                    purchaseDate = car.purchaseDate,
-                    disabledItemIDsRaw = car.disabledItemIDsRaw,
+                activeCarEditor = currentEditor.copy(
                     itemDrafts = buildEditorDrafts(
                         carId = car.id,
                         brand = car.brand,
@@ -235,13 +260,32 @@ class AddCarViewModel @Inject constructor(
                         existingOptions = existingOptions,
                     ),
                 ),
-                message = null,
             )
         }
     }
 
     fun closeCarEditor() {
-        _uiState.value = _uiState.value.copy(activeCarEditor = null)
+        _uiState.value = _uiState.value.copy(
+            activeCarEditor = null,
+            editorValidationMessage = null,
+            isEditorValidationAlertPresented = false,
+            editorSaveErrorMessage = null,
+            isEditorSaveErrorAlertPresented = false,
+        )
+    }
+
+    fun dismissEditorValidationAlert() {
+        _uiState.value = _uiState.value.copy(
+            editorValidationMessage = null,
+            isEditorValidationAlertPresented = false,
+        )
+    }
+
+    fun dismissEditorSaveErrorAlert() {
+        _uiState.value = _uiState.value.copy(
+            editorSaveErrorMessage = null,
+            isEditorSaveErrorAlertPresented = false,
+        )
     }
 
     fun updateCarEditorBrand(brand: String) {
@@ -287,19 +331,33 @@ class AddCarViewModel @Inject constructor(
     }
 
     fun saveCar(
+        cars: List<CarProfileSnapshot>,
         editor: CarEditorState,
         drafts: List<ItemRuleDraft>,
     ) {
         val brand = editor.brand.trim()
         if (brand.isEmpty()) {
-            _uiState.value = _uiState.value.copy(message = "品牌不能为空")
+            showEditorValidationMessage("品牌不能为空")
             return
         }
 
         val modelName = editor.modelName.trim()
         if (modelName.isEmpty()) {
-            _uiState.value = _uiState.value.copy(message = "车型不能为空")
+            showEditorValidationMessage("车型不能为空")
             return
+        }
+
+        if (editor.editingCarId == null) {
+            val targetModelKey = carModelKey(brand = brand, modelName = modelName)
+            val conflictCar = cars.firstOrNull { car ->
+                carModelKey(brand = car.brand, modelName = car.modelName) == targetModelKey
+            }
+            if (conflictCar != null) {
+                showEditorSaveError(
+                    "车型“${conflictCar.brand} ${conflictCar.modelName}”已存在，不能重复添加。"
+                )
+                return
+            }
         }
 
         val mileage = mileageValueFromSegments(
@@ -320,7 +378,13 @@ class AddCarViewModel @Inject constructor(
         }
 
         if (targetDrafts.none { it.isEnabled }) {
-            _uiState.value = _uiState.value.copy(message = "请至少保留一个保养项目。")
+            showEditorValidationMessage(
+                if (editor.editingCarId == null) {
+                    "请至少保留一个默认项目或新增一个自定义项目。"
+                } else {
+                    "请至少保留一个保养项目。"
+                }
+            )
             return
         }
         val duplicateName = targetDrafts
@@ -330,15 +394,15 @@ class AddCarViewModel @Inject constructor(
             .entries
             .firstOrNull { it.value.size > 1 }
         if (duplicateName != null) {
-            _uiState.value = _uiState.value.copy(message = "存在重名项目，请先调整后再保存。")
+            showEditorValidationMessage("存在重名项目，请先调整后再保存。")
             return
         }
         if (targetDrafts.any { it.name.trim().isEmpty() }) {
-            _uiState.value = _uiState.value.copy(message = "项目名称不能为空。")
+            showEditorValidationMessage("项目名称不能为空。")
             return
         }
         if (targetDrafts.any { !it.remindByMileage && !it.remindByTime }) {
-            _uiState.value = _uiState.value.copy(message = "请至少开启一种提醒方式。")
+            showEditorValidationMessage("请至少开启一种提醒方式。")
             return
         }
 
@@ -390,7 +454,10 @@ class AddCarViewModel @Inject constructor(
                                 disabledItemIDsRaw = disabledItemIDsRaw,
                                 itemDrafts = targetDrafts,
                             ),
-                            message = saveOptionsResult.error.message,
+                            editorSaveErrorMessage = saveVehicleSaveFailureMessage(saveOptionsResult.error.message),
+                            isEditorSaveErrorAlertPresented = true,
+                            editorValidationMessage = null,
+                            isEditorValidationAlertPresented = false,
                         )
                         refreshCars()
                         return@launch
@@ -398,20 +465,84 @@ class AddCarViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         appliedCarId = result.value.normalizedRawAppliedCarId,
                         activeCarEditor = null,
-                        message = if (editor.editingCarId == null) {
-                            "添加车辆成功"
-                        } else {
-                            "更新车辆成功"
-                        },
+                        editorValidationMessage = null,
+                        isEditorValidationAlertPresented = false,
+                        editorSaveErrorMessage = null,
+                        isEditorSaveErrorAlertPresented = false,
+                        message = null,
                     )
                     refreshCars()
                 }
 
                 is RepositoryResult.Failure -> {
-                    _uiState.value = _uiState.value.copy(message = result.error.message)
+                    showEditorSaveError(saveVehicleSaveFailureMessage(result.error.message))
                 }
             }
         }
+    }
+
+    private fun showEditorValidationMessage(message: String) {
+        _uiState.value = _uiState.value.copy(
+            editorValidationMessage = message,
+            isEditorValidationAlertPresented = true,
+            editorSaveErrorMessage = null,
+            isEditorSaveErrorAlertPresented = false,
+        )
+    }
+
+    private fun showEditorSaveError(message: String) {
+        _uiState.value = _uiState.value.copy(
+            editorSaveErrorMessage = message,
+            isEditorSaveErrorAlertPresented = true,
+            editorValidationMessage = null,
+            isEditorValidationAlertPresented = false,
+        )
+    }
+
+    private fun saveVehicleSaveFailureMessage(detail: String?): String {
+        val normalizedDetail = detail.orEmpty().trim()
+        return if (
+            normalizedDetail.contains("重复", ignoreCase = true) ||
+            normalizedDetail.contains("constraint", ignoreCase = true) ||
+            normalizedDetail.contains("unique", ignoreCase = true) ||
+            normalizedDetail.contains("violat", ignoreCase = true)
+        ) {
+            "保存车辆与保养项目失败：存在重复数据，请检查同车同日记录、项目名称或车辆信息。"
+        } else {
+            "保存车辆与保养项目失败，请稍后重试。"
+        }
+    }
+
+    private fun buildCarEditorState(
+        editingCar: CarProfileSnapshot?,
+        existingOptions: List<CarItemOptionSnapshot>,
+        purchaseDate: LocalDate,
+        brand: String,
+        modelName: String,
+        mileageWan: Int,
+        mileageQian: Int,
+        mileageBai: Int,
+        disabledItemIDsRaw: String,
+    ): CarEditorState {
+        val normalizedBrand = brand.trim()
+        val normalizedModel = modelName.trim()
+        return CarEditorState(
+            editingCarId = editingCar?.id,
+            brand = normalizedBrand,
+            modelName = normalizedModel,
+            mileageWan = mileageWan,
+            mileageQian = mileageQian,
+            mileageBai = mileageBai,
+            purchaseDate = purchaseDate,
+            disabledItemIDsRaw = disabledItemIDsRaw,
+            itemDrafts = buildEditorDrafts(
+                carId = editingCar?.id,
+                brand = normalizedBrand,
+                modelName = normalizedModel,
+                disabledItemIDsRaw = disabledItemIDsRaw,
+                existingOptions = existingOptions,
+            ),
+        )
     }
 
     private fun buildEditorDrafts(
@@ -422,10 +553,15 @@ class AddCarViewModel @Inject constructor(
         existingOptions: List<CarItemOptionSnapshot>,
     ): List<ItemRuleDraft> {
         val options = if (existingOptions.isNotEmpty()) {
-            existingOptions
+            val defaultOrderByKey = carRepository.modelItemDefaults(brand, modelName).defaultOrderByKey
+            MaintenanceItemConfig.sortItemOptionsByDefaultOrder(
+                options = existingOptions,
+                defaultOrderByKey = defaultOrderByKey,
+                catalogKeySelector = { it.catalogKey },
+            )
         } else {
             val defaults = carRepository.modelItemDefaults(brand, modelName)
-            defaults.definitions.map { definition ->
+            defaults.defaultItemDefinitions.map { definition ->
                 CarItemOptionSnapshot(
                     id = UUID.randomUUID().toString(),
                     name = definition.defaultName,
@@ -442,7 +578,7 @@ class AddCarViewModel @Inject constructor(
                 )
             }
         }
-        val disabledIds = CarManagementRules.parseDisabledItemIDs(disabledItemIDsRaw).toSet()
+        val disabledIds = MaintenanceItemConfig.parseItemIDs(disabledItemIDsRaw).toSet()
         return options.map { option ->
             ItemRuleDraft(
                 id = option.id,
@@ -466,7 +602,7 @@ class AddCarViewModel @Inject constructor(
                 is RepositoryResult.Success -> {
                     val snapshots = if (result.value.isEmpty()) {
                         val defaults = carRepository.modelItemDefaults(car.brand, car.modelName)
-                        defaults.definitions.map { definition ->
+                        defaults.defaultItemDefinitions.map { definition ->
                             CarItemOptionSnapshot(
                                 id = UUID.randomUUID().toString(),
                                 name = definition.defaultName,
@@ -483,10 +619,15 @@ class AddCarViewModel @Inject constructor(
                             )
                         }
                     } else {
-                        result.value
+                        val defaultOrderByKey = carRepository.modelItemDefaults(car.brand, car.modelName).defaultOrderByKey
+                        MaintenanceItemConfig.sortItemOptionsByDefaultOrder(
+                            options = result.value,
+                            defaultOrderByKey = defaultOrderByKey,
+                            catalogKeySelector = { it.catalogKey },
+                        )
                     }
 
-                    val disabledIds = CarManagementRules.parseDisabledItemIDs(car.disabledItemIDsRaw).toSet()
+                    val disabledIds = MaintenanceItemConfig.parseItemIDs(car.disabledItemIDsRaw).toSet()
                     _uiState.value = _uiState.value.copy(
                         activeItemConfigEditor = ItemConfigEditorState(
                             carId = car.id,
@@ -669,11 +810,42 @@ fun AddCarEditorPage(
         CarEditorPage(
             modifier = Modifier.fillMaxSize(),
             editor = editor,
-            carCount = uiState.cars.size,
             onBack = onBackRequested,
-            onSave = viewModel::saveCar,
+            onSave = { currentEditor, drafts ->
+                viewModel.saveCar(
+                    cars = uiState.cars,
+                    editor = currentEditor,
+                    drafts = drafts,
+                )
+            },
             onBrandChange = viewModel::updateCarEditorBrand,
             onModelChange = viewModel::updateCarEditorModel,
+        )
+    }
+
+    if (uiState.isEditorValidationAlertPresented) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissEditorValidationAlert,
+            title = { Text(text = "提示") },
+            text = { Text(text = uiState.editorValidationMessage.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissEditorValidationAlert) {
+                    Text(text = "我知道了")
+                }
+            },
+        )
+    }
+
+    if (uiState.isEditorSaveErrorAlertPresented) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissEditorSaveErrorAlert,
+            title = { Text(text = "保存失败") },
+            text = { Text(text = uiState.editorSaveErrorMessage.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissEditorSaveErrorAlert) {
+                    Text(text = "我知道了")
+                }
+            },
         )
     }
 }
@@ -705,11 +877,6 @@ fun AddCarManagementSection(
                 uiState.loading -> StatusLoading(text = "加载车辆中...")
                 uiState.cars.isEmpty() -> StatusMessage(text = "还没有车辆，点击下方“添加车辆”开始记录")
                 else -> {
-                    Text(
-                        text = "车辆数量：${uiState.cars.size}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    HorizontalDivider()
                     uiState.cars.forEach { car ->
                         CarRowCard(
                             car = car,
@@ -782,51 +949,22 @@ fun AddCarManagementSection(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     drafts.forEach { draft ->
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                ) {
-                                    Text(
-                                        text = draft.name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                    Switch(
-                                        checked = draft.isEnabled,
-                                        onCheckedChange = { enabled ->
-                                            drafts = drafts.map {
-                                                if (it.id == draft.id) it.copy(isEnabled = enabled) else it
-                                            }
-                                        },
-                                    )
+                        MaintenanceDraftSummaryCard(
+                            draft = draft,
+                            onClick = { editingDraftId = draft.id },
+                            onEnabledChange = { enabled ->
+                                drafts = drafts.map {
+                                    if (it.id == draft.id) it.copy(isEnabled = enabled) else it
                                 }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    OutlinedButton(
-                                        onClick = { editingDraftId = draft.id },
-                                        modifier = Modifier.weight(1f),
-                                    ) {
-                                        Text(text = "编辑规则")
-                                    }
-                                    if (!draft.isDefault) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                drafts = drafts.filterNot { it.id == draft.id }
-                                            },
-                                            modifier = Modifier.weight(1f),
-                                        ) {
-                                            Text(text = "删除")
-                                        }
-                                    }
+                            },
+                            onDelete = if (!draft.isDefault) {
+                                {
+                                    drafts = drafts.filterNot { it.id == draft.id }
                                 }
-                            }
-                        }
+                            } else {
+                                null
+                            },
+                        )
                     }
                     FilledTonalButton(
                         onClick = { addingCustomDraft = true },
@@ -989,12 +1127,10 @@ private fun CarRowCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CarEditorPage(
     modifier: Modifier = Modifier,
     editor: CarEditorState,
-    carCount: Int,
     onBack: () -> Unit,
     onSave: (CarEditorState, List<ItemRuleDraft>) -> Unit,
     onBrandChange: (String) -> Unit,
@@ -1012,6 +1148,7 @@ private fun CarEditorPage(
     var editingDraftId by remember { mutableStateOf<String?>(null) }
     var addingCustomDraft by remember { mutableStateOf(false) }
     val modelOptions = remember(brand) { addCarModelOptions(brand) }
+    val canSave = brand.trim().isNotEmpty() && modelName.trim().isNotEmpty()
 
     LaunchedEffect(brand, modelOptions) {
         if (modelName !in modelOptions) {
@@ -1019,20 +1156,16 @@ private fun CarEditorPage(
         }
     }
 
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = purchaseDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-    )
-
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onBack) {
                 Text(text = "返回")
@@ -1056,132 +1189,113 @@ private fun CarEditorPage(
                         drafts,
                     )
                 },
+                enabled = canSave,
             ) {
                 Text(text = "保存")
             }
         }
+        HorizontalDivider()
 
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (editor.editingCarId == null) {
-                    SingleChoiceDropdownField(
-                        label = "品牌",
-                        selected = brand,
-                        options = ADD_CAR_BRAND_OPTIONS,
-                        onSelect = { selected ->
-                            brand = selected
-                            val nextModels = addCarModelOptions(selected)
-                            if (modelName !in nextModels) {
-                                modelName = nextModels.firstOrNull().orEmpty()
-                            }
-                            onBrandChange(selected)
-                        },
-                    )
-                    SingleChoiceDropdownField(
-                        label = "车型",
-                        selected = modelName,
-                        options = modelOptions,
-                        onSelect = {
-                            modelName = it
-                            onModelChange(it)
-                        },
-                    )
-                } else {
-                    Text(text = "品牌：$brand", style = MaterialTheme.typography.bodyMedium)
-                    Text(text = "车型：$modelName", style = MaterialTheme.typography.bodyMedium)
-                }
-
-                OutlinedButton(
-                    onClick = { showPurchaseDatePicker = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = "上路日期：${MyDataTransferTimeCodec.formatDate(purchaseDate)}")
-                }
-
-                OutlinedButton(
-                    onClick = { showMileagePicker = true },
-                    modifier = Modifier.fillMaxWidth(),
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text(
-                        text = "里程：${mileageValueFromSegments(wan = mileageWan, qian = mileageQian, bai = mileageBai)} km",
+                        text = "车辆信息",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                     )
+                    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                        if (editor.editingCarId == null) {
+                            SingleChoiceDropdownField(
+                                label = "品牌",
+                                selected = brand,
+                                options = ADD_CAR_BRAND_OPTIONS,
+                                onSelect = { selected ->
+                                    brand = selected
+                                    val nextModels = addCarModelOptions(selected)
+                                    if (modelName !in nextModels) {
+                                        modelName = nextModels.firstOrNull().orEmpty()
+                                    }
+                                    onBrandChange(selected)
+                                },
+                            )
+                            SingleChoiceDropdownField(
+                                label = "车型",
+                                selected = modelName,
+                                options = modelOptions,
+                                onSelect = {
+                                    modelName = it
+                                    onModelChange(it)
+                                },
+                            )
+                        } else {
+                            LabelValueRow(label = "品牌", value = brand)
+                            LabelValueRow(label = "车型", value = modelName)
+                        }
+                        LabelValueRow(
+                            label = "上路日期",
+                            value = MyDataTransferTimeCodec.formatDate(purchaseDate),
+                            onClick = { showPurchaseDatePicker = true },
+                        )
+                        LabelValueRow(
+                            label = "里程",
+                            value = mileageDisplayText(mileageWan, mileageQian, mileageBai),
+                            onClick = { showMileagePicker = true },
+                        )
+                    }
                 }
             }
-        }
 
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "保养项目设置",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
-                )
-                drafts.forEach { draft ->
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(text = draft.name, style = MaterialTheme.typography.bodyMedium)
-                                Switch(
-                                    checked = draft.isEnabled,
-                                    onCheckedChange = { enabled ->
-                                        drafts = drafts.map {
-                                            if (it.id == draft.id) it.copy(isEnabled = enabled) else it
-                                        }
-                                    },
-                                )
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                OutlinedButton(
-                                    onClick = { editingDraftId = draft.id },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(text = "编辑规则")
-                                }
-                                if (!draft.isDefault) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            drafts = drafts.filterNot { it.id == draft.id }
-                                        },
-                                        modifier = Modifier.weight(1f),
-                                    ) {
-                                        Text(text = "删除")
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = "保养项目设置",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        drafts.forEach { draft ->
+                            MaintenanceDraftSummaryCard(
+                                draft = draft,
+                                onClick = { editingDraftId = draft.id },
+                                onEnabledChange = { enabled ->
+                                    drafts = drafts.map {
+                                        if (it.id == draft.id) it.copy(isEnabled = enabled) else it
                                     }
-                                }
-                            }
+                                },
+                                onDelete = if (!draft.isDefault) {
+                                    {
+                                        drafts = drafts.filterNot { it.id == draft.id }
+                                    }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = { addingCustomDraft = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(text = "新增自定义项目")
                         }
                     }
                 }
-                FilledTonalButton(
-                    onClick = { addingCustomDraft = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = "新增自定义项目")
-                }
-                Text(
-                    text = "当前车辆数量：$carCount",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
 
     if (showMileagePicker) {
-        MileageWheelPickerDialog(
+        CarMileagePickerDialog(
             wan = mileageWan,
             qian = mileageQian,
             bai = mileageBai,
@@ -1196,29 +1310,14 @@ private fun CarEditorPage(
     }
 
     if (showPurchaseDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showPurchaseDatePicker = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val selectedMillis = datePickerState.selectedDateMillis
-                        if (selectedMillis != null) {
-                            purchaseDate = epochMillisToLocalDate(selectedMillis)
-                        }
-                        showPurchaseDatePicker = false
-                    },
-                ) {
-                    Text(text = "应用")
-                }
+        CarPurchaseDatePickerDialog(
+            purchaseDate = purchaseDate,
+            onDismiss = { showPurchaseDatePicker = false },
+            onConfirm = {
+                purchaseDate = it
+                showPurchaseDatePicker = false
             },
-            dismissButton = {
-                TextButton(onClick = { showPurchaseDatePicker = false }) {
-                    Text(text = "取消")
-                }
-            },
-        ) {
-            DatePicker(state = datePickerState)
-        }
+        )
     }
 
     val editingDraft = drafts.firstOrNull { it.id == editingDraftId }
@@ -1267,131 +1366,249 @@ private fun SingleChoiceDropdownField(
     onSelect: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedButton(
-            onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(text = "$label：$selected")
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.fillMaxWidth(0.92f),
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(text = option) },
-                    onClick = {
-                        onSelect(option)
-                        expanded = false
-                    },
+    var anchorWidthPx by remember { mutableStateOf(0) }
+    ListItem(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = true },
+        headlineContent = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        trailingContent = {
+            Box(
+                modifier = Modifier.onGloballyPositioned { coordinates ->
+                    anchorWidthPx = coordinates.size.width
+                },
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = selected.ifBlank { "请选择" },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    )
+                    Text(
+                        text = "⌄",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
+                    modifier = Modifier.widthIn(
+                        min = 220.dp,
+                        max = if (anchorWidthPx > 0) {
+                            with(LocalDensity.current) { anchorWidthPx.toDp() }.coerceAtLeast(220.dp)
+                        } else {
+                            320.dp
+                        },
+                    ),
+                ) {
+                    options.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = option,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                            },
+                            onClick = {
+                                onSelect(option)
+                                expanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        },
+    )
+    HorizontalDivider()
+}
+
+@Composable
+private fun LabelValueRow(
+    label: String,
+    value: String,
+    onClick: (() -> Unit)? = null,
+) {
+    ListItem(
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { base ->
+                if (onClick != null) base.clickable(onClick = onClick) else base
+            },
+        headlineContent = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        trailingContent = {
+            if (onClick != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = value,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "⌄",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
+            }
+        },
+    )
+    HorizontalDivider()
+}
+
+@Composable
+private fun MaintenanceDraftSummaryCard(
+    draft: ItemRuleDraft,
+    onClick: () -> Unit,
+    onEnabledChange: (Boolean) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    OutlinedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = draft.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (draft.isDefault) {
+                            DefaultBadge()
+                        }
+                    }
+                    Text(
+                        text = "提醒：${
+                            MaintenanceItemConfig.reminderSummaryText(
+                                option = draft,
+                                remindByMileageSelector = { it.remindByMileage },
+                                mileageIntervalSelector = { it.mileageInterval },
+                                remindByTimeSelector = { it.remindByTime },
+                                monthIntervalSelector = { it.monthInterval },
+                                mileageTextFormatter = ::reminderDistanceText,
+                            )
+                        }",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = draft.isEnabled,
+                    onCheckedChange = onEnabledChange,
+                )
+            }
+            if (onDelete != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    OutlinedButton(onClick = onDelete) {
+                        Text(text = "删除")
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MileageWheelPickerDialog(
-    wan: Int,
-    qian: Int,
-    bai: Int,
-    onDismiss: () -> Unit,
-    onConfirm: (wan: Int, qian: Int, bai: Int) -> Unit,
-) {
-    var editingWan by remember(wan) { mutableStateOf(wan) }
-    var editingQian by remember(qian) { mutableStateOf(qian) }
-    var editingBai by remember(bai) { mutableStateOf(bai) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = "设置里程（滚动选择）") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                ) {
-                    NumberWheelPicker(
-                        label = "万",
-                        value = editingWan,
-                        range = 0..99,
-                        onValueChange = { editingWan = it },
-                    )
-                    NumberWheelPicker(
-                        label = "千",
-                        value = editingQian,
-                        range = 0..9,
-                        onValueChange = { editingQian = it },
-                    )
-                    NumberWheelPicker(
-                        label = "百",
-                        value = editingBai,
-                        range = 0..9,
-                        onValueChange = { editingBai = it },
-                    )
-                }
-                Text(
-                    text = "当前里程：${mileageValueFromSegments(editingWan, editingQian, editingBai)} km",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirm(editingWan, editingQian, editingBai)
-                },
-            ) {
-                Text(text = "完成")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = "取消")
-            }
-        },
-    )
+private fun DefaultBadge() {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        shape = RoundedCornerShape(50),
+    ) {
+        Text(
+            text = "默认",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
 }
 
-@Composable
-private fun NumberWheelPicker(
-    label: String,
-    value: Int,
-    range: IntRange,
-    onValueChange: (Int) -> Unit,
-) {
-    val itemHeightPx = with(LocalDensity.current) { 36.dp.roundToPx() }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, style = MaterialTheme.typography.bodySmall)
-        AndroidView(
-            modifier = Modifier,
-            factory = { context ->
-                NumberPicker(context).apply {
-                    minValue = range.first
-                    maxValue = range.last
-                    wrapSelectorWheel = true
-                    descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-                    setOnValueChangedListener { _, _, newVal ->
-                        onValueChange(newVal)
-                    }
+private fun reminderDistanceText(value: Int): String {
+    val safeValue = value.coerceAtLeast(0)
+    if (safeValue >= 10_000) {
+        val wan = safeValue / 10_000
+        val remainder = safeValue % 10_000
+        val qian = remainder / 1_000
+        val bai = (remainder % 1_000) / 100
+
+        if (wan > 0) {
+            if (qian > 0 || bai > 0) {
+                val decimalValue = (qian * 1_000 + bai * 100) / 10_000.0
+                val fullString = String.format("%.1f", decimalValue)
+                val parts = fullString.split(".")
+                val decimalPart = if (parts.size > 1) {
+                    parts[1].replace(Regex("^0+|0+$"), "")
+                } else {
+                    ""
                 }
-            },
-            update = { picker ->
-                picker.minValue = range.first
-                picker.maxValue = range.last
-                picker.value = value.coerceIn(range.first, range.last)
-                picker.setOnValueChangedListener { _, _, newVal ->
-                    onValueChange(newVal)
+                if (decimalPart.isEmpty()) {
+                    return "${wan}万公里"
                 }
-                picker.layoutParams = android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                    itemHeightPx * 3,
-                )
-            },
-        )
+                return "${wan}.${decimalPart}万公里"
+            }
+            return "${wan}万公里"
+        }
+    }
+    return "${safeValue}公里"
+}
+
+private fun mileageDisplayText(wan: Int, qian: Int, bai: Int): String {
+    val normalizedWan = wan.coerceAtLeast(0)
+    val normalizedQian = qian.coerceIn(0, 9)
+    val normalizedBai = bai.coerceIn(0, 9)
+    if (normalizedWan == 0 && normalizedQian == 0 && normalizedBai == 0) {
+        return "0"
+    }
+    return buildString {
+        if (normalizedWan > 0) append("${normalizedWan}万")
+        if (normalizedQian > 0 || (normalizedWan > 0 && normalizedBai > 0)) append("${normalizedQian}千")
+        if (normalizedBai > 0 || isEmpty()) append("${normalizedBai}百")
     }
 }
 
@@ -1544,7 +1761,7 @@ private fun NumberAdjustRow(
     }
 }
 
-private fun epochMillisToLocalDate(epochMillis: Long): LocalDate {
+internal fun epochMillisToLocalDate(epochMillis: Long): LocalDate {
     return java.time.Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())
         .toLocalDate()

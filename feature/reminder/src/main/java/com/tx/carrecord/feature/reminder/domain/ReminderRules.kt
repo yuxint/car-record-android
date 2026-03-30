@@ -1,17 +1,16 @@
 package com.tx.carrecord.feature.reminder.domain
 
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.roundToInt
 
 object ReminderRules {
-    private const val ITEM_ID_SEPARATOR: Char = '|'
-
     fun latestLogKey(carId: String, itemId: String): String = "$carId|$itemId"
 
     fun buildLatestRecordIndex(
         records: List<ReminderRecordSnapshot>,
-        itemIdSeparator: Char = ITEM_ID_SEPARATOR,
+        itemIdSeparator: Char = '|',
     ): Map<String, ReminderRecordSnapshot> {
         val index = mutableMapOf<String, ReminderRecordSnapshot>()
         for (record in records) {
@@ -103,12 +102,16 @@ object ReminderRules {
         }
 
         val rawPercent = (rawProgress * 100.0).coerceAtLeast(0.0)
-        val warningStart = option.warningStartPercent.coerceAtLeast(0)
-        val dangerStart = option.dangerStartPercent.coerceAtLeast(warningStart)
-        val colorLevel = when {
-            rawPercent >= dangerStart.toDouble() -> ReminderProgressColorLevel.DANGER
-            rawPercent >= warningStart.toDouble() -> ReminderProgressColorLevel.WARNING
-            else -> ReminderProgressColorLevel.NORMAL
+        val colorLevel = when (
+            MaintenanceItemConfig.progressColorLevel(
+                rawPercent = rawPercent,
+                warningStartPercent = option.warningStartPercent,
+                dangerStartPercent = option.dangerStartPercent,
+            )
+        ) {
+            MaintenanceItemConfig.ProgressColorLevel.NORMAL -> MaintenanceItemConfig.ProgressColorLevel.NORMAL
+            MaintenanceItemConfig.ProgressColorLevel.WARNING -> MaintenanceItemConfig.ProgressColorLevel.WARNING
+            MaintenanceItemConfig.ProgressColorLevel.DANGER -> MaintenanceItemConfig.ProgressColorLevel.DANGER
         }
 
         return ReminderRow(
@@ -118,7 +121,7 @@ object ReminderRules {
             duePriority = duePriority,
             displayProgress = rawProgress.coerceIn(0.0, 1.0),
             progressText = "${rawPercent.roundToInt()}%",
-            detailTexts = buildDetailTexts(
+            detailTexts = MaintenanceItemConfig.reminderDetailTexts(
                 mileageRemaining = mileageRemaining,
                 daysRemaining = daysRemaining,
             ),
@@ -137,60 +140,14 @@ object ReminderRules {
     }
 
     private fun parseItemIds(raw: String, separator: Char): Set<String> {
+        if (separator == '|') {
+            return MaintenanceItemConfig.parseItemIDs(raw).toSet()
+        }
         if (raw.isBlank()) return emptySet()
         return raw
             .split(separator)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toSet()
-    }
-
-    private fun buildDetailTexts(
-        mileageRemaining: Int?,
-        daysRemaining: Int?,
-    ): List<String> {
-        val detailTexts = mutableListOf<String>()
-        mileageRemaining?.let { detailTexts.add(buildMileageDetailText(it)) }
-        daysRemaining?.let { detailTexts.add(buildTimeDetailText(it)) }
-        if (detailTexts.isEmpty()) {
-            detailTexts += "未设置提醒规则"
-        }
-        return detailTexts
-    }
-
-    private fun buildMileageDetailText(remaining: Int): String {
-        if (remaining > 0) {
-            return "按里程提醒：距离下次约${remaining}公里"
-        }
-        if (remaining == 0) {
-            return "按里程提醒：今日到期"
-        }
-        return "按里程提醒：已超${kotlin.math.abs(remaining)}公里"
-    }
-
-    private fun buildTimeDetailText(remainingDays: Int): String {
-        if (remainingDays > 0) {
-            return "按时间提醒：距离下次约${timeDistanceText(remainingDays)}"
-        }
-        if (remainingDays == 0) {
-            return "按时间提醒：今日到期"
-        }
-        return "按时间提醒：已超${timeDistanceText(kotlin.math.abs(remainingDays))}"
-    }
-
-    private fun timeDistanceText(days: Int): String {
-        if (days < 30) return "${days}天"
-        if (days < 365) {
-            val months = (days / 30).coerceAtLeast(1)
-            return "${months}个月"
-        }
-        val totalMonths = (days / 30).coerceAtLeast(12)
-        val years = totalMonths / 12
-        val months = totalMonths % 12
-        return if (months == 0) {
-            "${years}年"
-        } else {
-            "${years}年${months}个月"
-        }
     }
 }

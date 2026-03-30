@@ -8,6 +8,15 @@
 ./gradlew build
 ```
 
+- 本项目本地验证通过的全量构建命令（2026-03-30）：
+
+```sh
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+GRADLE_USER_HOME="/Users/tx/develepment/workspace/car-record-android/.gradle-local" \
+ANDROID_HOME="/Users/tx/Library/Android/sdk" \
+./gradlew build
+```
+
 - 仅构建 debug：
 
 ```sh

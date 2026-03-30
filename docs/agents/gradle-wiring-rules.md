@@ -14,14 +14,6 @@
 - 仅修改现有 Kotlin 文件逻辑，不改模块边界与依赖。
 - 仅修改文案、UI 样式或小范围规则常量。
 
-## 建议检查命令
-
-```sh
-./gradlew :app:assembleDebug
-./gradlew :app:lintDebug
-./gradlew :feature:my:test :feature:records:test :feature:reminder:test
-```
-
 ## 执行建议
 
 - 优先在仓库根目录执行命令，避免相对路径误判。

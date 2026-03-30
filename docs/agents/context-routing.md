@@ -32,8 +32,6 @@
   - 补读 `docs/agents/data-model.md`
 - 触发“新增/删除/移动模块、Gradle 配置、Manifest 与依赖接线”
   - 补读 `docs/agents/gradle-wiring-rules.md`
-- 触发“脚本调用、备份恢复流程、迁移步骤联动”：
-  - 补读 `docs/agents/scripts-reference.md`
 - 触发“架构边界、命名、文案、通用约束”：
   - 补读 `docs/agents/business-constraints.md`
 

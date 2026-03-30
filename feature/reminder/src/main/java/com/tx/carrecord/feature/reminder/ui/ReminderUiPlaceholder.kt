@@ -26,10 +26,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.common.RepositoryResult
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig.ProgressColorLevel
 import com.tx.carrecord.core.datastore.AppNavigationContext
 import com.tx.carrecord.core.datastore.RootTabRoute
 import com.tx.carrecord.feature.reminder.data.ReminderRepository
-import com.tx.carrecord.feature.reminder.domain.ReminderProgressColorLevel
 import com.tx.carrecord.feature.reminder.domain.ReminderRow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -238,10 +238,10 @@ private fun ReminderRowCard(
 }
 
 @Composable
-private fun progressColorFor(level: ReminderProgressColorLevel): Color {
+private fun progressColorFor(level: ProgressColorLevel): Color {
     return when (level) {
-        ReminderProgressColorLevel.NORMAL -> MaterialTheme.colorScheme.primary
-        ReminderProgressColorLevel.WARNING -> MaterialTheme.colorScheme.tertiary
-        ReminderProgressColorLevel.DANGER -> MaterialTheme.colorScheme.error
+        ProgressColorLevel.NORMAL -> MaterialTheme.colorScheme.primary
+        ProgressColorLevel.WARNING -> MaterialTheme.colorScheme.tertiary
+        ProgressColorLevel.DANGER -> MaterialTheme.colorScheme.error
     }
 }

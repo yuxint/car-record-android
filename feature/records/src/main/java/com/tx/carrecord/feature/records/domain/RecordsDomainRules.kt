@@ -1,11 +1,11 @@
 package com.tx.carrecord.feature.records.domain
 
+import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 object RecordsDomainRules {
-    private const val ITEM_ID_SEPARATOR: Char = '|'
     private val cycleDateFormatter: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE
 
     fun cycleKey(carId: String, date: LocalDate): String = "$carId|${date.format(cycleDateFormatter)}"
@@ -13,22 +13,12 @@ object RecordsDomainRules {
     fun cycleItemKey(cycleKey: String, itemId: String): String = "$cycleKey|$itemId"
 
     fun uniqueItemIDsPreservingOrder(raw: String): List<String> {
-        if (raw.isBlank()) return emptyList()
-
-        val seen = mutableSetOf<String>()
-        val unique = mutableListOf<String>()
-        for (itemId in raw.split(ITEM_ID_SEPARATOR).map { it.trim() }) {
-            if (itemId.isEmpty()) continue
-            if (seen.add(itemId)) {
-                unique += itemId
-            }
-        }
-        return unique
+        return MaintenanceItemConfig.parseItemIDs(raw)
     }
 
-    fun joinItemIDs(itemIds: List<String>): String = itemIds.joinToString(separator = ITEM_ID_SEPARATOR.toString())
+    fun joinItemIDs(itemIds: List<String>): String = MaintenanceItemConfig.joinItemIDs(itemIds)
 
-    fun normalizeItemIDsRaw(raw: String): String = joinItemIDs(uniqueItemIDsPreservingOrder(raw))
+    fun normalizeItemIDsRaw(raw: String): String = MaintenanceItemConfig.normalizeItemIDsRaw(raw)
 
     fun planSave(
         input: RecordSaveInput,
