@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -638,31 +639,57 @@ class AddCarViewModel @Inject constructor(
 }
 
 @Composable
-fun AddCarManagementSection(
+fun AddCarEditorPage(
     modifier: Modifier = Modifier,
     viewModel: AddCarViewModel = hiltViewModel(),
-    onCarEditorPageVisibleChange: (Boolean) -> Unit = {},
-    onCarsAvailabilityChange: (Boolean) -> Unit = {},
+    onBackRequested: () -> Unit = viewModel::closeCarEditor,
+    onEditorClosed: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val editor = uiState.activeCarEditor
+    var hasShownEditor by remember { mutableStateOf(false) }
 
-    LaunchedEffect(uiState.activeCarEditor != null) {
-        onCarEditorPageVisibleChange(uiState.activeCarEditor != null)
-    }
-    LaunchedEffect(uiState.cars.isNotEmpty()) {
-        onCarsAvailabilityChange(uiState.cars.isNotEmpty())
+    if (editor != null) {
+        hasShownEditor = true
     }
 
-    uiState.activeCarEditor?.let { editor ->
+    LaunchedEffect(editor, hasShownEditor) {
+        if (editor == null && hasShownEditor) {
+            onEditorClosed()
+        }
+    }
+
+    if (editor == null) return
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
         CarEditorPage(
+            modifier = Modifier.fillMaxSize(),
             editor = editor,
             carCount = uiState.cars.size,
-            onBack = viewModel::closeCarEditor,
+            onBack = onBackRequested,
             onSave = viewModel::saveCar,
             onBrandChange = viewModel::updateCarEditorBrand,
             onModelChange = viewModel::updateCarEditorModel,
         )
-        return
+    }
+}
+
+@Composable
+fun AddCarManagementSection(
+    modifier: Modifier = Modifier,
+    viewModel: AddCarViewModel = hiltViewModel(),
+    onOpenAddCarEditorPage: () -> Unit = {},
+    onOpenEditCarEditorPage: () -> Unit = {},
+    onCarsAvailabilityChange: (Boolean) -> Unit = {},
+) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(uiState.cars.isNotEmpty()) {
+        onCarsAvailabilityChange(uiState.cars.isNotEmpty())
     }
 
     ElevatedCard(modifier = modifier.fillMaxWidth()) {
@@ -688,7 +715,10 @@ fun AddCarManagementSection(
                             car = car,
                             isApplied = car.id == uiState.appliedCarId,
                             onApply = { viewModel.applyCar(car.id) },
-                            onEdit = { viewModel.openEditCarEditor(car) },
+                            onEdit = {
+                                viewModel.openEditCarEditor(car)
+                                onOpenEditCarEditorPage()
+                            },
                             onEditItemConfig = { viewModel.openItemConfigEditor(car) },
                             onDelete = { viewModel.requestDeleteCar(car) },
                         )
@@ -697,7 +727,10 @@ fun AddCarManagementSection(
             }
 
             FilledTonalButton(
-                onClick = viewModel::openAddCarEditor,
+                onClick = {
+                    viewModel.openAddCarEditor()
+                    onOpenAddCarEditorPage()
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = "添加车辆")
@@ -959,6 +992,7 @@ private fun CarRowCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CarEditorPage(
+    modifier: Modifier = Modifier,
     editor: CarEditorState,
     carCount: Int,
     onBack: () -> Unit,
@@ -990,7 +1024,7 @@ private fun CarEditorPage(
     )
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
@@ -1023,7 +1057,7 @@ private fun CarEditorPage(
                     )
                 },
             ) {
-                Text(text = if (editor.editingCarId == null) "保存" else "更新")
+                Text(text = "保存")
             }
         }
 
