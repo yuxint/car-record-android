@@ -103,4 +103,18 @@ class RecordsDomainRulesTest {
         assertEquals(listOf("item-b", "item-a", "item-c"), unique)
         assertEquals("item-b|item-a|item-c", RecordsDomainRules.joinItemIDs(unique))
     }
+
+    @Test
+    fun itemIDsAfterRemoval_应只移除当前项目并保持顺序() {
+        val remaining = RecordsDomainRules.itemIDsAfterRemoval("item-b|item-a|item-c|item-a", "item-a")
+
+        assertEquals(listOf("item-b", "item-c"), remaining)
+    }
+
+    @Test
+    fun shouldDeleteWholeRecordAfterRemovingItem_仅剩单项目或目标不存在时应整单删除() {
+        assertEquals(true, RecordsDomainRules.shouldDeleteWholeRecordAfterRemovingItem("item-a", "item-a"))
+        assertEquals(false, RecordsDomainRules.shouldDeleteWholeRecordAfterRemovingItem("item-a|item-b", "item-a"))
+        assertEquals(true, RecordsDomainRules.shouldDeleteWholeRecordAfterRemovingItem("item-a|item-b", "item-c"))
+    }
 }

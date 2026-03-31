@@ -25,6 +25,9 @@ data class SaveRecordRequest(
     val carId: String? = null,
     val date: LocalDate? = null,
     val itemIDsRaw: String,
+    val lockedItemId: String? = null,
+    val originalItemIDsRaw: String? = null,
+    val originalCycleKey: String? = null,
     val cost: Double,
     val mileage: Int,
     val note: String,
@@ -44,6 +47,11 @@ data class SaveRecordResult(
     val cycleKey: String,
     val normalizedItemIDsRaw: String,
     val syncedCarMileage: Int,
+    val splitRecordId: String? = null,
+)
+
+data class DeleteRecordItemResult(
+    val deletedWholeRecord: Boolean,
 )
 
 data class RecordSnapshot(
@@ -63,6 +71,8 @@ interface RecordRepository {
     suspend fun saveRecord(request: SaveRecordRequest): RepositoryResult<SaveRecordResult>
 
     suspend fun deleteRecord(recordId: String): RepositoryResult<Unit>
+
+    suspend fun deleteRecordItem(recordId: String, itemId: String): RepositoryResult<DeleteRecordItemResult>
 }
 
 class RoomRecordRepository @Inject constructor(
@@ -124,15 +134,36 @@ class RoomRecordRepository @Inject constructor(
             }
 
             val normalizedDate = request.date ?: appDateContext.now()
+            val existingRecords = dao.listRecordsByCarId(resolvedCarId)
+            val editingRecord = request.recordId?.let { recordId ->
+                existingRecords.firstOrNull { it.id == recordId }
+            }
+            val originalItemIDsRaw = request.originalItemIDsRaw ?: editingRecord?.itemIDsRaw
+            val originalCycleKey = request.originalCycleKey ?: editingRecord?.cycleKey
+            val originalItemIDs = originalItemIDsRaw
+                ?.let(RecordsDomainRules::uniqueItemIDsPreservingOrder)
+                .orEmpty()
+            val isLockedItemEdit = !request.lockedItemId.isNullOrBlank() && request.recordId != null && originalItemIDs.isNotEmpty()
+            val shouldSplitLockedEdit = isLockedItemEdit &&
+                originalItemIDs.size > 1 &&
+                originalCycleKey != null &&
+                originalCycleKey != RecordsDomainRules.cycleKey(resolvedCarId, normalizedDate)
+            val normalizedItemIDsRaw = when {
+                shouldSplitLockedEdit -> RecordsDomainRules.joinItemIDs(listOfNotNull(request.lockedItemId))
+                isLockedItemEdit -> RecordsDomainRules.joinItemIDs(originalItemIDs)
+                else -> RecordsDomainRules.normalizeItemIDsRaw(request.itemIDsRaw)
+            }
             val decision = RecordsDomainRules.planSave(
                 input = RecordSaveInput(
-                    recordId = request.recordId,
+                    recordId = if (shouldSplitLockedEdit) null else request.recordId,
                     carId = resolvedCarId,
                     dateTime = normalizedDate.atStartOfDay(),
-                    itemIDsRaw = request.itemIDsRaw,
+                    itemIDsRaw = normalizedItemIDsRaw,
                     mileage = request.mileage,
                 ),
-                existingRecords = dao.listRecordsByCarId(resolvedCarId).map { record ->
+                existingRecords = existingRecords
+                    .filterNot { it.id == request.recordId }
+                    .map { record ->
                     ExistingRecordSnapshot(
                         id = record.id,
                         carId = record.carId,
@@ -151,43 +182,102 @@ class RoomRecordRepository @Inject constructor(
                 )
 
             database.withTransaction {
-                val recordEntity = MaintenanceRecordEntity(
-                    id = success.plan.targetRecordId,
-                    carId = resolvedCarId,
-                    date = toEpochSeconds(success.plan.normalizedDate),
-                    itemIDsRaw = success.plan.normalizedItemIDsRaw,
-                    cost = request.cost,
-                    mileage = request.mileage,
-                    note = request.note,
-                    cycleKey = success.plan.cycleKey,
-                )
-                if (request.recordId == null) {
-                    dao.insertRecord(recordEntity)
-                } else {
+                val originalRecord = editingRecord
+                if (shouldSplitLockedEdit && originalRecord != null) {
+                    val remainingItemIDs = originalItemIDs.filterNot { it == request.lockedItemId }
+                    if (remainingItemIDs.isEmpty()) {
+                        return@withTransaction
+                    }
+
                     dao.updateRecordById(
+                        recordId = originalRecord.id,
+                        carId = originalRecord.carId,
+                        date = originalRecord.date,
+                        itemIDsRaw = RecordsDomainRules.joinItemIDs(remainingItemIDs),
+                        cost = originalRecord.cost,
+                        mileage = originalRecord.mileage,
+                        note = originalRecord.note,
+                        cycleKey = originalRecord.cycleKey,
+                    )
+                    dao.replaceRecordItems(
+                        recordId = originalRecord.id,
+                        entities = remainingItemIDs.map { itemId ->
+                            val cycleItemKey = RecordsDomainRules.cycleItemKey(
+                                cycleKey = originalRecord.cycleKey,
+                                itemId = itemId,
+                            )
+                            MaintenanceRecordItemEntity(
+                                id = cycleItemKey,
+                                recordId = originalRecord.id,
+                                itemId = itemId,
+                                cycleItemKey = cycleItemKey,
+                                createdAt = originalRecord.date,
+                            )
+                        },
+                    )
+
+                    val splitRecordEntity = MaintenanceRecordEntity(
+                        id = success.plan.targetRecordId,
+                        carId = resolvedCarId,
+                        date = toEpochSeconds(success.plan.normalizedDate),
+                        itemIDsRaw = success.plan.normalizedItemIDsRaw,
+                        cost = request.cost,
+                        mileage = request.mileage,
+                        note = request.note,
+                        cycleKey = success.plan.cycleKey,
+                    )
+                    dao.insertRecord(splitRecordEntity)
+                    dao.replaceRecordItems(
+                        recordId = splitRecordEntity.id,
+                        entities = success.plan.relationDrafts.map { draft ->
+                            MaintenanceRecordItemEntity(
+                                id = draft.id,
+                                recordId = draft.recordId,
+                                itemId = draft.itemId,
+                                cycleItemKey = draft.cycleItemKey,
+                                createdAt = draft.createdAtEpochSeconds,
+                            )
+                        },
+                    )
+                } else {
+                    val recordEntity = MaintenanceRecordEntity(
+                        id = success.plan.targetRecordId,
+                        carId = resolvedCarId,
+                        date = toEpochSeconds(success.plan.normalizedDate),
+                        itemIDsRaw = success.plan.normalizedItemIDsRaw,
+                        cost = request.cost,
+                        mileage = request.mileage,
+                        note = request.note,
+                        cycleKey = success.plan.cycleKey,
+                    )
+                    if (request.recordId == null) {
+                        dao.insertRecord(recordEntity)
+                    } else {
+                        dao.updateRecordById(
+                            recordId = success.plan.targetRecordId,
+                            carId = recordEntity.carId,
+                            date = recordEntity.date,
+                            itemIDsRaw = recordEntity.itemIDsRaw,
+                            cost = recordEntity.cost,
+                            mileage = recordEntity.mileage,
+                            note = recordEntity.note,
+                            cycleKey = recordEntity.cycleKey,
+                        )
+                    }
+
+                    dao.replaceRecordItems(
                         recordId = success.plan.targetRecordId,
-                        carId = recordEntity.carId,
-                        date = recordEntity.date,
-                        itemIDsRaw = recordEntity.itemIDsRaw,
-                    cost = recordEntity.cost,
-                    mileage = recordEntity.mileage,
-                    note = recordEntity.note,
-                    cycleKey = recordEntity.cycleKey,
+                        entities = success.plan.relationDrafts.map { draft ->
+                            MaintenanceRecordItemEntity(
+                                id = draft.id,
+                                recordId = draft.recordId,
+                                itemId = draft.itemId,
+                                cycleItemKey = draft.cycleItemKey,
+                                createdAt = draft.createdAtEpochSeconds,
+                            )
+                        },
                     )
                 }
-
-                dao.replaceRecordItems(
-                    recordId = success.plan.targetRecordId,
-                    entities = success.plan.relationDrafts.map { draft ->
-                        MaintenanceRecordItemEntity(
-                            id = draft.id,
-                            recordId = draft.recordId,
-                            itemId = draft.itemId,
-                            cycleItemKey = draft.cycleItemKey,
-                            createdAt = draft.createdAtEpochSeconds,
-                        )
-                    },
-                )
 
                 if (request.intervalDrafts.isNotEmpty()) {
                     val optionIDs = request.intervalDrafts.map { it.itemId }.toSet()
@@ -225,6 +315,7 @@ class RoomRecordRepository @Inject constructor(
                     cycleKey = success.plan.cycleKey,
                     normalizedItemIDsRaw = success.plan.normalizedItemIDsRaw,
                     syncedCarMileage = success.plan.syncedCarMileage,
+                    splitRecordId = if (shouldSplitLockedEdit) success.plan.targetRecordId else null,
                 ),
             )
         }.getOrElse { throwable ->
@@ -245,6 +336,69 @@ class RoomRecordRepository @Inject constructor(
                 dao.deleteRecordById(existingRecord.id)
             }
             RepositoryResult.Success(Unit)
+        }.getOrElse { throwable ->
+            RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
+        }
+    }
+
+    override suspend fun deleteRecordItem(
+        recordId: String,
+        itemId: String,
+    ): RepositoryResult<DeleteRecordItemResult> {
+        return runCatching {
+            val existingRecord = dao.findRecordById(recordId)
+                ?: return RepositoryResult.Failure(
+                    RepositoryError.NotFound(
+                        code = "RECORD_NOT_FOUND",
+                        message = "未找到要删除的记录。",
+                    ),
+                )
+
+            val existingItemIds = RecordsDomainRules.uniqueItemIDsPreservingOrder(existingRecord.itemIDsRaw)
+            if (existingItemIds.none { it == itemId }) {
+                return RepositoryResult.Failure(
+                    RepositoryError.NotFound(
+                        code = "RECORD_ITEM_NOT_FOUND",
+                        message = "未找到要删除的保养项目。",
+                    ),
+                )
+            }
+
+            val remainingItemIds = RecordsDomainRules.itemIDsAfterRemoval(existingRecord.itemIDsRaw, itemId)
+            val originalItemCount = RecordsDomainRules.uniqueItemIDsPreservingOrder(existingRecord.itemIDsRaw).size
+            if (remainingItemIds.size == originalItemCount) {
+                return RepositoryResult.Failure(
+                    RepositoryError.NotFound(
+                        code = "RECORD_ITEM_NOT_FOUND",
+                        message = "未找到要删除的保养项目。",
+                    ),
+                )
+            }
+
+            if (remainingItemIds.isEmpty()) {
+                database.withTransaction {
+                    dao.deleteRecordById(existingRecord.id)
+                }
+                return RepositoryResult.Success(DeleteRecordItemResult(deletedWholeRecord = true))
+            }
+
+            database.withTransaction {
+                dao.updateRecordById(
+                    recordId = existingRecord.id,
+                    carId = existingRecord.carId,
+                    date = existingRecord.date,
+                    itemIDsRaw = RecordsDomainRules.joinItemIDs(remainingItemIds),
+                    cost = existingRecord.cost,
+                    mileage = existingRecord.mileage,
+                    note = existingRecord.note,
+                    cycleKey = existingRecord.cycleKey,
+                )
+                dao.deleteRecordItemByRecordIdAndItemId(
+                    recordId = existingRecord.id,
+                    itemId = itemId,
+                )
+            }
+            RepositoryResult.Success(DeleteRecordItemResult(deletedWholeRecord = false))
         }.getOrElse { throwable ->
             RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
         }

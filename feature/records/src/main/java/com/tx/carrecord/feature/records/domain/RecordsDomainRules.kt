@@ -20,6 +20,14 @@ object RecordsDomainRules {
 
     fun normalizeItemIDsRaw(raw: String): String = MaintenanceItemConfig.normalizeItemIDsRaw(raw)
 
+    fun itemIDsAfterRemoval(raw: String, removingItemId: String): List<String> {
+        return uniqueItemIDsPreservingOrder(raw).filterNot { it == removingItemId }
+    }
+
+    fun shouldDeleteWholeRecordAfterRemovingItem(raw: String, removingItemId: String): Boolean {
+        return uniqueItemIDsPreservingOrder(raw).size <= 1 || uniqueItemIDsPreservingOrder(raw).none { it == removingItemId }
+    }
+
     fun planSave(
         input: RecordSaveInput,
         existingRecords: List<ExistingRecordSnapshot>,

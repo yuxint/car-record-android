@@ -32,7 +32,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -1739,14 +1738,14 @@ private fun NumberAdjustRow(
     ) {
         Text(text = "$label：${valueText(value)}")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),
             ) {
                 Text(text = "-")
             }
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),
@@ -1774,14 +1773,14 @@ private fun YearAdjustRow(
     ) {
         Text(text = "$label：$displayText")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),
             ) {
                 Text(text = "-")
             }
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),

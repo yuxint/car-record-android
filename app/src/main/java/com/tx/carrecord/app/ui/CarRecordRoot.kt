@@ -49,10 +49,6 @@ fun CarRecordRoot(
     var hasCars by remember { mutableStateOf(false) }
     val isRecordEditorPageVisible = isRecordsAddPageVisible || isReminderAddPageVisible
 
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        recordsViewModel.refresh()
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -157,6 +153,7 @@ fun CarRecordRoot(
         ) {
             AddRecordPage(
                 uiState = recordsUiState,
+                isCostReadOnly = recordsViewModel.isCostReadOnly,
                 onBackClick = {
                     if (isRecordsAddPageVisible) {
                         setRecordsAddPageVisible(false)
@@ -179,7 +176,6 @@ fun CarRecordRoot(
                 onDismissIntervalConfirm = recordsViewModel::dismissIntervalConfirmation,
                 onIntervalConfirmMileageChange = recordsViewModel::updateIntervalConfirmMileage,
                 onIntervalConfirmYearChange = recordsViewModel::updateIntervalConfirmYear,
-                onCarClick = { carId -> recordsViewModel.selectEditorCar(carId) },
                 onDateClick = recordsViewModel::updateMaintenanceDate,
                 onMileageClick = recordsViewModel::updateMileage,
                 onItemToggle = recordsViewModel::toggleItem,

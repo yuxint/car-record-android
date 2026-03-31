@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -36,6 +36,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.common.RepositoryResult
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig.ProgressColorLevel
+import com.tx.carrecord.core.datastore.AppliedCarContext
 import com.tx.carrecord.feature.reminder.data.ReminderRepository
 import com.tx.carrecord.feature.reminder.domain.ReminderRow
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -43,6 +44,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 data class ReminderUiState(
@@ -57,9 +59,14 @@ data class ReminderUiState(
 @HiltViewModel
 class ReminderViewModel @Inject constructor(
     private val repository: ReminderRepository,
+    private val appliedCarContext: AppliedCarContext,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ReminderUiState(loading = true))
     val uiState: StateFlow<ReminderUiState> = _uiState.asStateFlow()
+
+    init {
+        observeAppliedCarChanges()
+    }
 
     fun refresh() {
         viewModelScope.launch {
@@ -85,6 +92,14 @@ class ReminderViewModel @Inject constructor(
             }
         }
     }
+
+    private fun observeAppliedCarChanges() {
+        viewModelScope.launch {
+            appliedCarContext.appliedCarIdFlow
+                .distinctUntilChanged()
+                .collect { refresh() }
+        }
+    }
 }
 
 @Composable
@@ -105,9 +120,6 @@ fun ReminderScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.refresh()
-    }
     ReminderHomeContent(
         uiState = uiState,
         scrollState = scrollState,
@@ -228,15 +240,22 @@ private fun ReminderRowCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = itemName,
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Text(
-                text = progressText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = progressColor,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = itemName,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
+                Text(
+                    text = progressText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = progressColor,
+                )
+            }
             ReminderProgressBar(
                 progress = progress,
                 color = progressColor,

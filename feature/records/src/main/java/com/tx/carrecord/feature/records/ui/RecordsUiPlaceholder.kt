@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,20 +28,19 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -48,10 +48,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -68,6 +74,7 @@ import com.tx.carrecord.feature.records.data.RecordRepository
 import com.tx.carrecord.feature.records.data.RecordSnapshot
 import com.tx.carrecord.feature.records.data.SaveRecordIntervalDraft
 import com.tx.carrecord.feature.records.data.SaveRecordRequest
+import com.tx.carrecord.feature.records.domain.RecordsDomainRules
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.text.NumberFormat
 import java.time.Instant
@@ -81,6 +88,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -111,9 +119,21 @@ data class RecordsUiState(
     val isSaveErrorAlertPresented: Boolean = false,
     val intervalConfirmDrafts: List<RecordIntervalConfirmDraft> = emptyList(),
     val isIntervalConfirmPresented: Boolean = false,
-    val pendingDeleteRecord: RecordSnapshot? = null,
+    val pendingDeleteTarget: RecordDeleteTarget? = null,
     val isDeleteConfirmPresented: Boolean = false,
+    val editingLockedItemId: String? = null,
+    val editingOriginalRecord: RecordSnapshot? = null,
 )
+
+sealed interface RecordDeleteTarget {
+    data class CycleGroup(
+        val group: RecordCycleGroup,
+    ) : RecordDeleteTarget
+
+    data class ItemRow(
+        val row: RecordItemRow,
+    ) : RecordDeleteTarget
+}
 
 data class RecordIntervalConfirmDraft(
     val id: String,
@@ -177,6 +197,10 @@ class RecordsViewModel @Inject constructor(
     val uiState: StateFlow<RecordsUiState> = _uiState.asStateFlow()
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
+    init {
+        observeAppliedCarChanges()
+    }
+
     fun refresh() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loading = true, errorMessage = null)
@@ -207,8 +231,11 @@ class RecordsViewModel @Inject constructor(
                         isSaveErrorAlertPresented = false,
                         intervalConfirmDrafts = emptyList(),
                         isIntervalConfirmPresented = false,
-                        pendingDeleteRecord = null,
+                        pendingDeleteTarget = null,
                         isDeleteConfirmPresented = false,
+                        editingLockedItemId = null,
+                        editingOriginalRecord = null,
+                        editingRecordId = null,
                     )
                 }
 
@@ -224,11 +251,22 @@ class RecordsViewModel @Inject constructor(
                         isSaveErrorAlertPresented = false,
                         intervalConfirmDrafts = emptyList(),
                         isIntervalConfirmPresented = false,
-                        pendingDeleteRecord = null,
+                        pendingDeleteTarget = null,
                         isDeleteConfirmPresented = false,
+                        editingLockedItemId = null,
+                        editingOriginalRecord = null,
+                        editingRecordId = null,
                     )
                 }
             }
+        }
+    }
+
+    private fun observeAppliedCarChanges() {
+        viewModelScope.launch {
+            appliedCarContext.appliedCarIdFlow
+                .distinctUntilChanged()
+                .collect { refresh() }
         }
     }
 
@@ -241,6 +279,8 @@ class RecordsViewModel @Inject constructor(
             selectedCarId = selectedCarId,
             selectedItemIds = emptySet(),
             editingRecordId = null,
+            editingLockedItemId = null,
+            editingOriginalRecord = null,
             maintenanceDate = state.maintenanceDate,
             mileageWan = mileage.wan,
             mileageQian = mileage.qian,
@@ -253,16 +293,17 @@ class RecordsViewModel @Inject constructor(
             isSaveErrorAlertPresented = false,
             intervalConfirmDrafts = emptyList(),
             isIntervalConfirmPresented = false,
-            pendingDeleteRecord = null,
+            pendingDeleteTarget = null,
             isDeleteConfirmPresented = false,
             message = null,
             isSaving = false,
         )
     }
 
-    fun openEditRecord(record: RecordSnapshot) {
+    fun openEditRecord(record: RecordSnapshot, lockedItemId: String? = null) {
         viewModelScope.launch {
-            val car = dao.findCarById(record.carId) ?: return@launch
+            val currentCarId = _uiState.value.selectedCarId ?: record.carId
+            val car = dao.findCarById(currentCarId) ?: return@launch
             val availableItemOptions = sortItemOptionsByDefaultOrder(
                 carBrand = car.brand,
                 carModelName = car.modelName,
@@ -278,15 +319,25 @@ class RecordsViewModel @Inject constructor(
                     )
                 },
             )
-            val selectedItemIds = MaintenanceItemConfig.parseItemIDs(record.itemIDsRaw)
+            val originalItemIds = MaintenanceItemConfig.parseItemIDs(record.itemIDsRaw)
                 .filter { itemId -> availableItemOptions.any { it.id == itemId } }
                 .toSet()
+            val effectiveLockedItemId = lockedItemId?.takeIf { itemId ->
+                availableItemOptions.any { it.id == itemId }
+            }
+            val selectedItemIds = if (effectiveLockedItemId != null) {
+                setOf(effectiveLockedItemId)
+            } else {
+                originalItemIds
+            }
             val mileage = mileageSegmentsFromValue(record.mileage)
             _uiState.value = _uiState.value.copy(
                 selectedCarId = car.id,
                 availableItemOptions = availableItemOptions,
                 selectedItemIds = selectedItemIds,
                 editingRecordId = record.id,
+                editingLockedItemId = effectiveLockedItemId,
+                editingOriginalRecord = record,
                 maintenanceDate = record.date,
                 mileageWan = mileage.wan,
                 mileageQian = mileage.qian,
@@ -299,7 +350,7 @@ class RecordsViewModel @Inject constructor(
                 isSaveErrorAlertPresented = false,
                 intervalConfirmDrafts = emptyList(),
                 isIntervalConfirmPresented = false,
-                pendingDeleteRecord = null,
+                pendingDeleteTarget = null,
                 isDeleteConfirmPresented = false,
                 message = null,
                 isSaving = false,
@@ -332,6 +383,7 @@ class RecordsViewModel @Inject constructor(
     }
 
     fun toggleItem(optionId: String) {
+        if (_uiState.value.editingLockedItemId != null) return
         if (_uiState.value.availableItemOptions.none { it.id == optionId }) return
         val nextSelected = _uiState.value.selectedItemIds.toMutableSet()
         if (!nextSelected.add(optionId)) {
@@ -348,6 +400,32 @@ class RecordsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(note = raw)
     }
 
+    val lockedItemNameText: String
+        get() {
+            val lockedItemId = _uiState.value.editingLockedItemId ?: return ""
+            return _uiState.value.availableItemOptions.firstOrNull { it.id == lockedItemId }
+                ?.name
+                .orEmpty()
+        }
+
+    val isItemSelectionLocked: Boolean
+        get() = _uiState.value.editingLockedItemId != null
+
+    val isSplitEditMode: Boolean
+        get() {
+            val lockedItemId = _uiState.value.editingLockedItemId ?: return false
+            val originalRecord = _uiState.value.editingOriginalRecord ?: return false
+            val originalItemIds = MaintenanceItemConfig.parseItemIDs(originalRecord.itemIDsRaw)
+            if (originalItemIds.size <= 1) return false
+            val selectedCarId = _uiState.value.selectedCarId ?: return false
+            val selectedCar = _uiState.value.availableCars.firstOrNull { it.id == selectedCarId } ?: return false
+            val targetCycleKey = RecordsDomainRules.cycleKey(selectedCar.id, _uiState.value.maintenanceDate)
+            return originalRecord.cycleKey != targetCycleKey && lockedItemId.isNotBlank()
+        }
+
+    val isCostReadOnly: Boolean
+        get() = _uiState.value.editingLockedItemId != null && !isSplitEditMode
+
     fun clearMessage() {
         _uiState.value = _uiState.value.copy(
             message = null,
@@ -355,7 +433,7 @@ class RecordsViewModel @Inject constructor(
             isValidationAlertPresented = false,
             isIntervalConfirmPresented = false,
             intervalConfirmDrafts = emptyList(),
-            pendingDeleteRecord = null,
+            pendingDeleteTarget = null,
             isDeleteConfirmPresented = false,
         )
     }
@@ -381,6 +459,11 @@ class RecordsViewModel @Inject constructor(
         val mileage = mileageValueFromSegments(state.mileageWan, state.mileageQian, state.mileageBai)
         if (mileage < 0) {
             showValidationMessage("里程必须是非负整数。")
+            return
+        }
+
+        if (state.editingLockedItemId != null && state.availableItemOptions.none { it.id == state.editingLockedItemId }) {
+            showValidationMessage("当前车辆没有可编辑的锁定项目。")
             return
         }
 
@@ -432,41 +515,84 @@ class RecordsViewModel @Inject constructor(
         )
     }
 
-    fun requestDeleteRecord(record: RecordSnapshot) {
+    fun requestDeleteCycleGroup(group: RecordCycleGroup) {
         _uiState.value = _uiState.value.copy(
-            pendingDeleteRecord = record,
+            pendingDeleteTarget = RecordDeleteTarget.CycleGroup(group = group),
+            isDeleteConfirmPresented = true,
+        )
+    }
+
+    fun requestDeleteItemRow(row: RecordItemRow) {
+        _uiState.value = _uiState.value.copy(
+            pendingDeleteTarget = RecordDeleteTarget.ItemRow(row = row),
             isDeleteConfirmPresented = true,
         )
     }
 
     fun dismissDeleteRecordConfirmation() {
         _uiState.value = _uiState.value.copy(
-            pendingDeleteRecord = null,
+            pendingDeleteTarget = null,
             isDeleteConfirmPresented = false,
         )
     }
 
     fun confirmDeleteRecord() {
-        val record = _uiState.value.pendingDeleteRecord ?: return
+        val target = _uiState.value.pendingDeleteTarget ?: return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, message = null)
-            when (val result = repository.deleteRecord(record.id)) {
-                is RepositoryResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        isSaving = false,
-                        pendingDeleteRecord = null,
-                        isDeleteConfirmPresented = false,
-                        message = "删除记录成功",
-                    )
-                    refresh()
+            when (target) {
+                is RecordDeleteTarget.CycleGroup -> {
+                    var deleteErrorMessage: String? = null
+                    for (record in target.group.records.distinctBy { it.id }) {
+                        when (val result = repository.deleteRecord(record.id)) {
+                            is RepositoryResult.Success -> Unit
+                            is RepositoryResult.Failure -> {
+                                deleteErrorMessage = result.error.message
+                                break
+                            }
+                        }
+                    }
+                    if (deleteErrorMessage == null) {
+                        _uiState.value = _uiState.value.copy(
+                            isSaving = false,
+                            pendingDeleteTarget = null,
+                            isDeleteConfirmPresented = false,
+                            message = "删除记录成功",
+                        )
+                        refresh()
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            isSaving = false,
+                            saveErrorMessage = deleteErrorMessage,
+                            isSaveErrorAlertPresented = true,
+                        )
+                    }
                 }
 
-                is RepositoryResult.Failure -> {
-                    _uiState.value = _uiState.value.copy(
-                        isSaving = false,
-                        saveErrorMessage = result.error.message,
-                        isSaveErrorAlertPresented = true,
-                    )
+                is RecordDeleteTarget.ItemRow -> {
+                    when (val result = repository.deleteRecordItem(target.row.record.id, target.row.itemId)) {
+                        is RepositoryResult.Success -> {
+                            _uiState.value = _uiState.value.copy(
+                                isSaving = false,
+                                pendingDeleteTarget = null,
+                                isDeleteConfirmPresented = false,
+                                message = if (result.value.deletedWholeRecord) {
+                                    "删除记录成功"
+                                } else {
+                                    "删除保养项目成功"
+                                },
+                            )
+                            refresh()
+                        }
+
+                        is RepositoryResult.Failure -> {
+                            _uiState.value = _uiState.value.copy(
+                                isSaving = false,
+                                saveErrorMessage = result.error.message,
+                                isSaveErrorAlertPresented = true,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -485,15 +611,34 @@ class RecordsViewModel @Inject constructor(
             return
         }
 
+        val splitEditMode = run {
+            val lockedItemId = state.editingLockedItemId ?: return@run false
+            val originalRecord = state.editingOriginalRecord ?: return@run false
+            val originalItemIds = MaintenanceItemConfig.parseItemIDs(originalRecord.itemIDsRaw)
+            if (originalItemIds.size <= 1) return@run false
+            val selectedCar = state.availableCars.firstOrNull { it.id == selectedCarId } ?: return@run false
+            val targetCycleKey = RecordsDomainRules.cycleKey(selectedCar.id, state.maintenanceDate)
+            originalRecord.cycleKey != targetCycleKey && lockedItemId.isNotBlank()
+        }
+
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, message = null)
+            val lockedItemId = state.editingLockedItemId
+            val originalRecord = state.editingOriginalRecord
             when (
                 val result = repository.saveRecord(
                     SaveRecordRequest(
                         recordId = state.editingRecordId,
                         carId = selectedCarId,
                         date = state.maintenanceDate,
-                        itemIDsRaw = joinItemIDs(state.selectedItemIds, state.availableItemOptions),
+                        itemIDsRaw = when {
+                            lockedItemId == null -> joinItemIDs(state.selectedItemIds, state.availableItemOptions)
+                            splitEditMode -> lockedItemId
+                            else -> originalRecord?.itemIDsRaw ?: joinItemIDs(state.selectedItemIds, state.availableItemOptions)
+                        },
+                        lockedItemId = lockedItemId,
+                        originalItemIDsRaw = originalRecord?.itemIDsRaw,
+                        originalCycleKey = originalRecord?.cycleKey,
                         cost = cost,
                         mileage = mileage,
                         note = state.note.trim(),
@@ -520,6 +665,8 @@ class RecordsViewModel @Inject constructor(
                         intervalConfirmDrafts = emptyList(),
                         message = if (state.editingRecordId == null) "新增记录成功" else "更新记录成功",
                         editingRecordId = null,
+                        editingLockedItemId = null,
+                        editingOriginalRecord = null,
                     )
                     refresh()
                     onSuccess?.invoke()
@@ -709,6 +856,17 @@ class RecordsViewModel @Inject constructor(
         }
 
         return result
+            .let { value ->
+                if (value == "0" || value.startsWith("0.")) {
+                    value
+                } else {
+                    value.trimStart('0')
+                        .ifEmpty { "0" }
+                        .let { normalized ->
+                            if (normalized.startsWith(".")) "0$normalized" else normalized
+                        }
+                }
+            }
     }
 
     private fun joinItemIDs(selectedItemIds: Set<String>, availableOptions: List<RecordItemOptionChoice>): String {
@@ -755,10 +913,6 @@ fun RecordsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    LaunchedEffect(Unit) {
-        viewModel.refresh()
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -779,20 +933,47 @@ fun RecordsScreen(
                 viewModel.openEditRecord(record)
                 onAddRecordPageVisibleChange(true)
             },
-            onDeleteRecordClick = viewModel::requestDeleteRecord,
+            onEditItemRecordClick = { record, lockedItemId ->
+                viewModel.clearMessage()
+                viewModel.openEditRecord(record, lockedItemId)
+                onAddRecordPageVisibleChange(true)
+            },
+            onDeleteCycleGroupClick = viewModel::requestDeleteCycleGroup,
+            onDeleteItemRowClick = viewModel::requestDeleteItemRow,
             onDisplayModeChange = viewModel::updateDisplayMode,
         )
     }
 
-    if (uiState.isDeleteConfirmPresented && uiState.pendingDeleteRecord != null) {
-        val pendingDeleteRecord = uiState.pendingDeleteRecord
+    if (uiState.isDeleteConfirmPresented && uiState.pendingDeleteTarget != null) {
+        val pendingDeleteTarget = uiState.pendingDeleteTarget
         AlertDialog(
             onDismissRequest = viewModel::dismissDeleteRecordConfirmation,
-            title = { Text(text = "确认删除记录？") },
-            text = {
+            title = {
                 Text(
-                    text = "删除后无法恢复，确定要删除 ${formatDate(pendingDeleteRecord?.date ?: LocalDate.now())} 的这条保养记录吗？",
+                    text = if (pendingDeleteTarget is RecordDeleteTarget.ItemRow) {
+                        "确认删除项目？"
+                    } else {
+                        "确认删除记录？"
+                    },
                 )
+            },
+            text = {
+                when (val target = pendingDeleteTarget) {
+                    is RecordDeleteTarget.CycleGroup -> {
+                        val dateText = formatDate(target.group.date)
+                        Text(
+                            text = "删除后无法恢复，确定要删除 $dateText 的这组保养记录吗？",
+                        )
+                    }
+
+                    is RecordDeleteTarget.ItemRow -> {
+                        Text(
+                            text = "删除后将只移除 ${formatDate(target.row.record.date)} 的“${target.row.itemName}”项目；如果这是最后一个项目，会自动删除整条记录。",
+                        )
+                    }
+
+                    null -> Unit
+                }
             },
             confirmButton = {
                 TextButton(
@@ -818,7 +999,9 @@ private fun RecordsListPage(
     contentPadding: PaddingValues,
     onAddRecordClick: () -> Unit,
     onEditRecordClick: (RecordSnapshot) -> Unit,
-    onDeleteRecordClick: (RecordSnapshot) -> Unit,
+    onEditItemRecordClick: (RecordSnapshot, String) -> Unit,
+    onDeleteCycleGroupClick: (RecordCycleGroup) -> Unit,
+    onDeleteItemRowClick: (RecordItemRow) -> Unit,
     onDisplayModeChange: (RecordDisplayMode) -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -875,6 +1058,17 @@ private fun RecordsListPage(
                     )
                 }
             }
+            if (uiState.loading == false && uiState.errorMessage == null) {
+                Text(
+                    text = if (uiState.displayMode == RecordDisplayMode.BY_CYCLE) {
+                        "按周期展示（${cycleGroups.size}条）"
+                    } else {
+                        "按项目展示（${itemRows.size}条）"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             when {
                 uiState.loading -> StatusLoading(text = "加载保养记录中...")
@@ -892,7 +1086,7 @@ private fun RecordsListPage(
                         RecordCycleGroupCard(
                             group = group,
                             onEditRecordClick = onEditRecordClick,
-                            onDeleteRecordClick = onDeleteRecordClick,
+                            onDeleteCycleGroupClick = onDeleteCycleGroupClick,
                         )
                     }
                 }
@@ -901,8 +1095,8 @@ private fun RecordsListPage(
                     itemRows.forEach { row ->
                         RecordItemRowCard(
                             row = row,
-                            onEditRecordClick = onEditRecordClick,
-                            onDeleteRecordClick = onDeleteRecordClick,
+                            onEditItemRecordClick = onEditItemRecordClick,
+                            onDeleteItemRowClick = onDeleteItemRowClick,
                         )
                     }
                 }
@@ -931,6 +1125,7 @@ private fun RecordsListPage(
 @Composable
 fun AddRecordPage(
     uiState: RecordsUiState,
+    isCostReadOnly: Boolean = false,
     onBackClick: () -> Unit,
     onSaveClick: () -> Unit,
     onConfirmIntervalSaveClick: () -> Unit,
@@ -939,24 +1134,27 @@ fun AddRecordPage(
     onDismissIntervalConfirm: () -> Unit,
     onIntervalConfirmMileageChange: (String, Int) -> Unit,
     onIntervalConfirmYearChange: (String, Double) -> Unit,
-    onCarClick: (String) -> Unit,
     onDateClick: (LocalDate) -> Unit,
     onMileageClick: (Int, Int, Int) -> Unit,
     onItemToggle: (String) -> Unit,
     onCostChange: (String) -> Unit,
     onNoteChange: (String) -> Unit,
 ) {
-    var showCarPicker by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showMileagePicker by remember { mutableStateOf(false) }
     var showItemPicker by remember { mutableStateOf(false) }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val selectedCar = uiState.availableCars.firstOrNull { it.id == uiState.selectedCarId }
     val selectedCarText = selectedCar?.let {
         "${it.brand} ${it.modelName}（${formatDate(it.purchaseDate)}）"
     } ?: "未选择"
-    val selectedItemsText = when (uiState.selectedItemIds.size) {
-        0 -> "请选择（可多选）"
+    val lockedItemName = uiState.editingLockedItemId?.let { lockedItemId ->
+        uiState.availableItemOptions.firstOrNull { it.id == lockedItemId }?.name.orEmpty()
+    }.orEmpty()
+    val selectedItemsText = when {
+        uiState.editingLockedItemId != null && lockedItemName.isNotBlank() -> lockedItemName
+        uiState.selectedItemIds.isEmpty() -> "请选择（可多选）"
         else -> "已选${uiState.selectedItemIds.size}项"
     }
     val canSubmit = uiState.canAddRecord &&
@@ -1024,11 +1222,6 @@ fun AddRecordPage(
                             PickerFieldRow(
                                 label = "车辆",
                                 value = selectedCarText,
-                                onClick = if (uiState.availableCars.size > 1) {
-                                    { showCarPicker = true }
-                                } else {
-                                    null
-                                },
                             )
                             PickerFieldRow(
                                 label = "保养时间",
@@ -1063,9 +1256,13 @@ fun AddRecordPage(
                             PickerFieldRow(
                                 label = "选择项目",
                                 value = selectedItemsText,
-                                onClick = { showItemPicker = true },
+                                onClick = if (uiState.editingLockedItemId == null) {
+                                    { showItemPicker = true }
+                                } else {
+                                    null
+                                },
                             )
-                            if (uiState.selectedItemIds.isNotEmpty()) {
+                            if (uiState.selectedItemIds.isNotEmpty() && uiState.editingLockedItemId == null) {
                                 Text(
                                     text = uiState.availableItemOptions
                                         .filter { it.id in uiState.selectedItemIds }
@@ -1080,81 +1277,87 @@ fun AddRecordPage(
                     }
                 }
 
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text(
-                            text = "保养费用",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                        )
-                        OutlinedTextField(
-                            modifier = Modifier.fillMaxWidth(),
-                            value = uiState.costText,
-                            onValueChange = onCostChange,
-                            label = { Text("总费用") },
-                            singleLine = true,
-                        )
-                        OutlinedTextField(
-                            modifier = Modifier.fillMaxWidth(),
-                            value = uiState.note,
-                            onValueChange = onNoteChange,
-                            label = { Text("备注（选填）") },
-                            minLines = 2,
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (showCarPicker) {
-        AlertDialog(
-            onDismissRequest = { showCarPicker = false },
-            title = { Text(text = "选择车辆") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 360.dp)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    uiState.availableCars.forEach { car ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                if (uiState.editingLockedItemId == null) {
+                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            RadioButton(
-                                selected = car.id == uiState.selectedCarId,
-                                onClick = {
-                                    onCarClick(car.id)
-                                    showCarPicker = false
-                                },
+                            Text(
+                                text = "保养费用",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             )
-                            Column(
-                                modifier = Modifier.padding(start = 4.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(text = "${car.brand} ${car.modelName}")
                                 Text(
-                                    text = formatDate(car.purchaseDate),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = "总费用",
+                                    modifier = Modifier.width(100.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                TextField(
+                                    modifier = Modifier.weight(1f),
+                                    value = uiState.costText,
+                                    onValueChange = onCostChange,
+                                    singleLine = true,
+                                    readOnly = isCostReadOnly,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal,
+                                        imeAction = ImeAction.Done,
+                                    ),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = { keyboardController?.hide() },
+                                    ),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.End),
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                        disabledContainerColor = Color.Transparent,
+                                        errorContainerColor = Color.Transparent,
+                                    ),
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Text(
+                                    text = "备注（选填）",
+                                    modifier = Modifier.width(100.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                TextField(
+                                    modifier = Modifier.weight(1f),
+                                    value = uiState.note,
+                                    onValueChange = onNoteChange,
+                                    minLines = 1,
+                                    maxLines = 3,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+                                        imeAction = ImeAction.Done,
+                                    ),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = { keyboardController?.hide() },
+                                    ),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.End),
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                        disabledContainerColor = Color.Transparent,
+                                        errorContainerColor = Color.Transparent,
+                                    ),
                                 )
                             }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { showCarPicker = false }) {
-                    Text(text = "取消")
-                }
-            },
-        )
+            }
+        }
     }
 
     if (showDatePicker) {
@@ -1197,7 +1400,8 @@ fun AddRecordPage(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                                .padding(vertical = 4.dp)
+                                .clickable { onItemToggle(option.id) },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
@@ -1379,14 +1583,14 @@ private fun NumberAdjustRow(
     ) {
         Text(text = "$label：${valueText(value)}")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),
             ) {
                 Text(text = "-")
             }
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),
@@ -1414,14 +1618,14 @@ private fun YearAdjustRow(
     ) {
         Text(text = "$label：$displayText")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),
             ) {
                 Text(text = "-")
             }
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                 modifier = Modifier.height(32.dp),
@@ -1498,20 +1702,16 @@ private fun StatusMessage(
     )
 }
 
-private data class RecordCycleGroup(
+data class RecordCycleGroup(
     val date: LocalDate,
     val itemSummary: String,
-    val records: List<RecordCycleRecord>,
+    val records: List<RecordSnapshot>,
     val totalCost: Double,
 )
 
-private data class RecordCycleRecord(
-    val record: RecordSnapshot,
-    val itemSummary: String,
-)
-
-private data class RecordItemRow(
+data class RecordItemRow(
     val id: String,
+    val itemId: String,
     val itemName: String,
     val record: RecordSnapshot,
 )
@@ -1521,10 +1721,10 @@ private data class RecordItemRow(
 private fun RecordCycleGroupCard(
     group: RecordCycleGroup,
     onEditRecordClick: (RecordSnapshot) -> Unit,
-    onDeleteRecordClick: (RecordSnapshot) -> Unit,
+    onDeleteCycleGroupClick: (RecordCycleGroup) -> Unit,
 ) {
     val record = group.records.firstOrNull() ?: return
-    var menuExpanded by remember(group.date, record.record.id) { mutableStateOf(false) }
+    var menuExpanded by remember(group.date, record.id) { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxWidth()) {
         OutlinedCard(
@@ -1545,7 +1745,7 @@ private fun RecordCycleGroupCard(
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                 )
                 Text(
-                    text = "里程：${formatMileageKm(record.record.mileage)}km",
+                    text = "里程：${formatMileageKm(record.mileage)}km",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -1571,83 +1771,14 @@ private fun RecordCycleGroupCard(
                     text = { Text(text = "编辑") },
                     onClick = {
                         menuExpanded = false
-                        onEditRecordClick(record.record)
+                        onEditRecordClick(record)
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(text = "删除") },
                     onClick = {
                         menuExpanded = false
-                        onDeleteRecordClick(record.record)
-                    },
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun RecordCycleRecordCard(
-    record: RecordCycleRecord,
-    onEditClick: () -> Unit,
-    onDeleteClick: () -> Unit,
-) {
-    var menuExpanded by remember(record.record.id) { mutableStateOf(false) }
-
-    Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = { menuExpanded = true },
-                ),
-            shape = RoundedCornerShape(16.dp),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "里程：${formatMileageKm(record.record.mileage)}km",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    text = "项目：${record.itemSummary}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "费用：${formatMoney(record.record.cost)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (record.record.note.isNotBlank()) {
-                    Text(
-                        text = "备注：${record.record.note.trim()}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
-        Box(modifier = Modifier.align(Alignment.BottomEnd)) {
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
-                modifier = Modifier.wrapContentSize(Alignment.BottomEnd),
-            ) {
-                DropdownMenuItem(
-                    text = { Text(text = "编辑") },
-                    onClick = {
-                        menuExpanded = false
-                        onEditClick()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text(text = "删除") },
-                    onClick = {
-                        menuExpanded = false
-                        onDeleteClick()
+                        onDeleteCycleGroupClick(group)
                     },
                 )
             }
@@ -1659,19 +1790,20 @@ private fun RecordCycleRecordCard(
 @Composable
 private fun RecordItemRowCard(
     row: RecordItemRow,
-    onEditRecordClick: (RecordSnapshot) -> Unit,
-    onDeleteRecordClick: (RecordSnapshot) -> Unit,
+    onEditItemRecordClick: (RecordSnapshot, String) -> Unit,
+    onDeleteItemRowClick: (RecordItemRow) -> Unit,
 ) {
     var menuExpanded by remember(row.id) { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        ElevatedCard(
+        OutlinedCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .combinedClickable(
                     onClick = {},
                     onLongClick = { menuExpanded = true },
                 ),
+            shape = RoundedCornerShape(16.dp),
         ) {
             Column(
                 modifier = Modifier.padding(12.dp),
@@ -1682,7 +1814,7 @@ private fun RecordItemRowCard(
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                 )
                 Text(
-                    text = "日期：${formatDate(row.record.date)}",
+                    text = "保养时间：${formatDate(row.record.date)}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -1690,13 +1822,6 @@ private fun RecordItemRowCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (row.record.note.isNotBlank()) {
-                    Text(
-                        text = "备注：${row.record.note.trim()}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
 
@@ -1710,14 +1835,14 @@ private fun RecordItemRowCard(
                     text = { Text(text = "编辑") },
                     onClick = {
                         menuExpanded = false
-                        onEditRecordClick(row.record)
+                        onEditItemRecordClick(row.record, row.itemId)
                     },
                 )
                 DropdownMenuItem(
                     text = { Text(text = "删除") },
                     onClick = {
                         menuExpanded = false
-                        onDeleteRecordClick(row.record)
+                        onDeleteItemRowClick(row)
                     },
                 )
             }
@@ -1772,16 +1897,7 @@ private fun buildRecordCycleGroups(
             RecordCycleGroup(
                 date = date,
                 itemSummary = groupItemSummary,
-                records = groupRecordsSorted.map { record ->
-                    val itemSummary = MaintenanceItemConfig.parseItemIDs(record.itemIDsRaw)
-                        .mapNotNull { nameById[it] }
-                        .ifEmpty { listOf("未标注项目") }
-                        .joinToString("、")
-                    RecordCycleRecord(
-                        record = record,
-                        itemSummary = itemSummary,
-                    )
-                },
+                records = groupRecordsSorted,
                 totalCost = groupRecords.sumOf { it.cost },
             )
         }
@@ -1799,6 +1915,7 @@ private fun buildRecordItemRows(
             val itemName = nameById[itemId] ?: return@mapNotNull null
             RecordItemRow(
                 id = "${record.id}-$itemId",
+                itemId = itemId,
                 itemName = itemName,
                 record = record,
             )

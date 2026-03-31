@@ -128,7 +128,11 @@ object ReminderRules {
             itemName = option.name,
             rawProgress = rawProgress,
             duePriority = duePriority,
-            displayProgress = rawProgress.coerceIn(0.0, 1.0),
+            displayProgress = if (rawPercent.roundToInt() <= 0) {
+                0.0
+            } else {
+                rawProgress.coerceIn(0.0, 1.0)
+            },
             progressText = "${rawPercent.roundToInt()}%",
             detailTexts = MaintenanceItemConfig.reminderDetailTexts(
                 mileageRemaining = mileageRemaining,
