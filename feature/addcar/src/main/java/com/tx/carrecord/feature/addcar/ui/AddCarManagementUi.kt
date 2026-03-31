@@ -59,6 +59,7 @@ import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.common.RepositoryResult
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import com.tx.carrecord.core.datastore.AppDateContext
+import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.core.common.time.AppTimeCodec
 import com.tx.carrecord.feature.addcar.data.CarItemOptionSnapshot
 import com.tx.carrecord.feature.addcar.data.CarItemOptionUpsertDraft
@@ -158,6 +159,7 @@ data class AddCarUiState(
 class AddCarViewModel @Inject constructor(
     private val carRepository: CarRepository,
     private val appDateContext: AppDateContext,
+    private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
 ) : ViewModel() {
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
@@ -166,6 +168,7 @@ class AddCarViewModel @Inject constructor(
 
     init {
         refreshCars()
+        observeMaintenanceDataChanges()
     }
 
     fun refreshCars() {
@@ -196,6 +199,12 @@ class AddCarViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(loading = false, message = result.error.message)
                 }
             }
+        }
+    }
+
+    private fun observeMaintenanceDataChanges() {
+        viewModelScope.launch {
+            maintenanceDataChangeContext.changesFlow.collect { refreshCars() }
         }
     }
 
@@ -459,7 +468,6 @@ class AddCarViewModel @Inject constructor(
                             isEditorSaveErrorAlertPresented = false,
                             message = null,
                         )
-                        refreshCars()
                     }
 
                     is RepositoryResult.Failure -> {
@@ -621,7 +629,6 @@ class AddCarViewModel @Inject constructor(
                         appliedCarId = result.value.normalizedRawAppliedCarId,
                         message = "删除车辆成功",
                     )
-                    refreshCars()
                 }
 
                 is RepositoryResult.Failure -> {

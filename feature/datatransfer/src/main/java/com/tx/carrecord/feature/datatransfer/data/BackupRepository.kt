@@ -11,6 +11,7 @@ import com.tx.carrecord.core.database.model.MaintenanceRecordEntity
 import com.tx.carrecord.core.database.model.MaintenanceRecordItemEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
 import com.tx.carrecord.core.datastore.AppliedCarContext
+import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.core.common.time.AppTimeCodec
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportCarSnapshot
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportItemOptionSnapshot
@@ -43,6 +44,7 @@ class RoomBackupRepository @Inject constructor(
     private val database: CarRecordDatabase,
     private val dao: CarRecordDao,
     private val appliedCarContext: AppliedCarContext,
+    private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
 ) : BackupRepository {
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
@@ -159,6 +161,7 @@ class RoomBackupRepository @Inject constructor(
                 runCatching { UUID.fromString(entity.id) }.getOrNull()
             }
             appliedCarContext.normalizeAndPersist(carUUIDs)
+            maintenanceDataChangeContext.notifyChanged()
 
             RepositoryResult.Success(
                 BackupImportSummary(
@@ -178,6 +181,7 @@ class RoomBackupRepository @Inject constructor(
                 clearBusinessData()
             }
             appliedCarContext.normalizeAndPersist(emptyList())
+            maintenanceDataChangeContext.notifyChanged()
         }.fold(
             onSuccess = { RepositoryResult.Success(Unit) },
             onFailure = { RepositoryResult.Failure(RoomRepositoryErrorMapper.map(it)) },

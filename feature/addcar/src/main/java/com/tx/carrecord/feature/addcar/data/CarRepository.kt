@@ -10,6 +10,7 @@ import com.tx.carrecord.core.database.model.CarEntity
 import com.tx.carrecord.core.database.model.MaintenanceItemOptionEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
 import com.tx.carrecord.core.datastore.AppliedCarContext
+import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.core.common.time.AppTimeCodec
 import com.tx.carrecord.feature.addcar.domain.CarManagementRules
 import com.tx.carrecord.feature.addcar.domain.CarProfileSnapshot
@@ -106,6 +107,7 @@ class RoomCarRepository @Inject constructor(
     private val database: CarRecordDatabase,
     private val dao: CarRecordDao,
     private val appliedCarContext: AppliedCarContext,
+    private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
 ) : CarRepository {
     private companion object {
         const val ITEM_ID_SEPARATOR: Char = '|'
@@ -213,6 +215,7 @@ class RoomCarRepository @Inject constructor(
             database.withTransaction {
                 persistItemOptionSavePlan(plan)
             }
+            maintenanceDataChangeContext.notifyChanged()
 
             RepositoryResult.Success(Unit)
         }.getOrElse { throwable ->
@@ -254,6 +257,9 @@ class RoomCarRepository @Inject constructor(
                 if (entities.isNotEmpty()) {
                     dao.insertItemOptions(entities)
                 }
+            }
+            if (entities.isNotEmpty()) {
+                maintenanceDataChangeContext.notifyChanged()
             }
             RepositoryResult.Success(Unit)
         }.getOrElse { throwable ->
@@ -330,6 +336,7 @@ class RoomCarRepository @Inject constructor(
                 runCatching { UUID.fromString(entity.id) }.getOrNull()
             }
             val normalizedRawAppliedCarId = appliedCarContext.normalizeAndPersist(allCarIds)
+            maintenanceDataChangeContext.notifyChanged()
             RepositoryResult.Success(
                 CarMutationResult(
                     carId = targetCarId,
@@ -373,6 +380,7 @@ class RoomCarRepository @Inject constructor(
                 dao.deleteCarById(success.plan.deletedCarId)
             }
             appliedCarContext.setRawAppliedCarId(success.plan.normalizedRawAppliedCarId)
+            maintenanceDataChangeContext.notifyChanged()
             RepositoryResult.Success(
                 CarMutationResult(
                     carId = success.plan.deletedCarId,
@@ -411,6 +419,7 @@ class RoomCarRepository @Inject constructor(
                     )
                 }
             }
+            maintenanceDataChangeContext.notifyChanged()
             RepositoryResult.Success(Unit)
         }.getOrElse { throwable ->
             RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))

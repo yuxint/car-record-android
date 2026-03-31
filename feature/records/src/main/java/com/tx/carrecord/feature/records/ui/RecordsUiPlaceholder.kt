@@ -73,6 +73,7 @@ import com.tx.carrecord.core.database.error.RoomRepositoryErrorMapper
 import com.tx.carrecord.core.database.model.CarEntity
 import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.core.datastore.AppliedCarContext
+import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.feature.records.data.RecordRepository
 import com.tx.carrecord.feature.records.data.RecordSnapshot
 import com.tx.carrecord.feature.records.data.SaveRecordIntervalDraft
@@ -195,6 +196,7 @@ class RecordsViewModel @Inject constructor(
     private val dao: CarRecordDao,
     private val appliedCarContext: AppliedCarContext,
     private val appDateContext: AppDateContext,
+    private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RecordsUiState(loading = true))
     val uiState: StateFlow<RecordsUiState> = _uiState.asStateFlow()
@@ -202,6 +204,7 @@ class RecordsViewModel @Inject constructor(
 
     init {
         observeAppliedCarChanges()
+        observeMaintenanceDataChanges()
     }
 
     fun refresh() {
@@ -270,6 +273,12 @@ class RecordsViewModel @Inject constructor(
             appliedCarContext.appliedCarIdFlow
                 .distinctUntilChanged()
                 .collect { refresh() }
+        }
+    }
+
+    private fun observeMaintenanceDataChanges() {
+        viewModelScope.launch {
+            maintenanceDataChangeContext.changesFlow.collect { refresh() }
         }
     }
 
@@ -539,7 +548,7 @@ class RecordsViewModel @Inject constructor(
         )
     }
 
-    fun confirmDeleteRecord(onSuccess: (() -> Unit)? = null) {
+    fun confirmDeleteRecord() {
         val target = _uiState.value.pendingDeleteTarget ?: return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, message = null)
@@ -562,8 +571,6 @@ class RecordsViewModel @Inject constructor(
                             isDeleteConfirmPresented = false,
                             message = "删除记录成功",
                         )
-                        refresh()
-                        onSuccess?.invoke()
                     } else {
                         _uiState.value = _uiState.value.copy(
                             isSaving = false,
@@ -580,14 +587,12 @@ class RecordsViewModel @Inject constructor(
                                 isSaving = false,
                                 pendingDeleteTarget = null,
                                 isDeleteConfirmPresented = false,
-                                message = if (result.value.deletedWholeRecord) {
+                            message = if (result.value.deletedWholeRecord) {
                                     "删除记录成功"
                                 } else {
                                     "删除保养项目成功"
                                 },
                             )
-                            refresh()
-                            onSuccess?.invoke()
                         }
 
                         is RepositoryResult.Failure -> {
@@ -673,7 +678,6 @@ class RecordsViewModel @Inject constructor(
                         editingLockedItemId = null,
                         editingOriginalRecord = null,
                     )
-                    refresh()
                     onSuccess?.invoke()
                 }
 
@@ -915,7 +919,6 @@ fun RecordsScreen(
     viewModel: RecordsViewModel = hiltViewModel(),
     isAddRecordPageVisible: Boolean = false,
     onAddRecordPageVisibleChange: (Boolean) -> Unit = {},
-    onRecordsChanged: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -983,7 +986,7 @@ fun RecordsScreen(
             },
             confirmButton = {
                 TextButton(
-                    onClick = { viewModel.confirmDeleteRecord(onRecordsChanged) },
+                    onClick = viewModel::confirmDeleteRecord,
                     enabled = uiState.isSaving == false,
                 ) {
                     Text(text = if (uiState.isSaving) "删除中" else "确认删除")

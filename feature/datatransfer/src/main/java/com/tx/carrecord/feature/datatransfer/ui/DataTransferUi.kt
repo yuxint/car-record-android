@@ -94,7 +94,6 @@ class DataTransferViewModel @Inject constructor(
 
     fun importBackup(
         jsonText: String,
-        onSuccess: () -> Unit,
     ) {
         viewModelScope.launch {
             when (val result = backupRepository.importBackupJson(jsonText)) {
@@ -102,7 +101,6 @@ class DataTransferViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         message = "导入完成：车辆${result.value.importedCarCount}，项目${result.value.importedItemOptionCount}，记录${result.value.importedRecordCount}",
                     )
-                    onSuccess()
                 }
 
                 is RepositoryResult.Failure -> {
@@ -112,12 +110,11 @@ class DataTransferViewModel @Inject constructor(
         }
     }
 
-    fun resetAllData(onSuccess: () -> Unit) {
+    fun resetAllData() {
         viewModelScope.launch {
             when (val result = backupRepository.resetBusinessData()) {
                 is RepositoryResult.Success -> {
                     _uiState.value = _uiState.value.copy(message = "已重置全部数据")
-                    onSuccess()
                 }
 
                 is RepositoryResult.Failure -> {
@@ -152,7 +149,6 @@ class DataTransferViewModel @Inject constructor(
 @Composable
 fun DataTransferSection(
     modifier: Modifier = Modifier,
-    onImportSuccess: () -> Unit,
     viewModel: DataTransferViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -191,7 +187,7 @@ fun DataTransferSection(
             viewModel.onExportWriteResult(success = false, detail = "读取恢复文件失败")
             return@rememberLauncherForActivityResult
         }
-        viewModel.importBackup(importText, onSuccess = onImportSuccess)
+        viewModel.importBackup(importText)
     }
 
     LaunchedEffect(uiState.exportJsonPendingWrite) {
@@ -281,7 +277,7 @@ fun DataTransferSection(
                 TextButton(
                     onClick = {
                         shouldConfirmReset = false
-                        viewModel.resetAllData(onSuccess = onImportSuccess)
+                        viewModel.resetAllData()
                     },
                 ) {
                     Text(text = RESET_CONFIRM_ACTION)

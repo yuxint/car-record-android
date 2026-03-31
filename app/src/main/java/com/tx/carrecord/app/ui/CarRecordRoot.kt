@@ -83,7 +83,6 @@ fun CarRecordRoot(
                     viewModel = recordsViewModel,
                     isAddRecordPageVisible = isRecordsAddPageVisible,
                     onAddRecordPageVisibleChange = setRecordsAddPageVisible,
-                    onRecordsChanged = reminderViewModel::refresh,
                 )
                 RootTabRoute.MY -> MyScreen(
                     modifier = Modifier.padding(contentPadding),
@@ -95,7 +94,6 @@ fun CarRecordRoot(
                         onOpenEditCarEditorPage = { setCarEditorPageVisible(true) },
                     )
                     DataTransferSection(
-                        onImportSuccess = addCarViewModel::refreshCars,
                     )
                 }
             }
@@ -132,7 +130,6 @@ fun CarRecordRoot(
                     addCarViewModel.closeCarEditor()
                 },
                 onEditorClosed = {
-                    reminderViewModel.refresh()
                     setCarEditorPageVisible(false)
                 },
             )
@@ -165,7 +162,6 @@ fun CarRecordRoot(
                 onSaveClick = recordsViewModel::saveEditorRecord,
                 onConfirmIntervalSaveClick = {
                     recordsViewModel.confirmIntervalConfirmation {
-                        reminderViewModel.refresh()
                         if (isRecordsAddPageVisible) {
                             setRecordsAddPageVisible(false)
                         } else {

@@ -10,6 +10,8 @@ import com.tx.carrecord.core.datastore.AppliedCarContext
 import com.tx.carrecord.core.datastore.DatastoreAppDateContext
 import com.tx.carrecord.core.datastore.DatastoreAppNavigationContext
 import com.tx.carrecord.core.datastore.DatastoreAppliedCarContext
+import com.tx.carrecord.core.datastore.DatastoreMaintenanceDataChangeContext
+import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -48,4 +50,10 @@ abstract class RuntimeContextBindingModule {
     @Binds
     @Singleton
     abstract fun bindAppNavigationContext(impl: DatastoreAppNavigationContext): AppNavigationContext
+
+    @Binds
+    @Singleton
+    abstract fun bindMaintenanceDataChangeContext(
+        impl: DatastoreMaintenanceDataChangeContext,
+    ): MaintenanceDataChangeContext
 }

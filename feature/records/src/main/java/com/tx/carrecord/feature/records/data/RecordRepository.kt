@@ -10,6 +10,7 @@ import com.tx.carrecord.core.database.model.MaintenanceRecordItemEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
 import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.core.datastore.AppliedCarContext
+import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.feature.records.domain.ExistingRecordSnapshot
 import com.tx.carrecord.feature.records.domain.RecordSaveDecision
 import com.tx.carrecord.feature.records.domain.RecordSaveInput
@@ -80,6 +81,7 @@ class RoomRecordRepository @Inject constructor(
     private val dao: CarRecordDao,
     private val appDateContext: AppDateContext,
     private val appliedCarContext: AppliedCarContext,
+    private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
 ) : RecordRepository {
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
@@ -308,6 +310,7 @@ class RoomRecordRepository @Inject constructor(
                     )
                 }
             }
+            maintenanceDataChangeContext.notifyChanged()
 
             RepositoryResult.Success(
                 SaveRecordResult(
@@ -335,6 +338,7 @@ class RoomRecordRepository @Inject constructor(
             database.withTransaction {
                 dao.deleteRecordById(existingRecord.id)
             }
+            maintenanceDataChangeContext.notifyChanged()
             RepositoryResult.Success(Unit)
         }.getOrElse { throwable ->
             RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
@@ -379,6 +383,7 @@ class RoomRecordRepository @Inject constructor(
                 database.withTransaction {
                     dao.deleteRecordById(existingRecord.id)
                 }
+                maintenanceDataChangeContext.notifyChanged()
                 return RepositoryResult.Success(DeleteRecordItemResult(deletedWholeRecord = true))
             }
 
@@ -398,6 +403,7 @@ class RoomRecordRepository @Inject constructor(
                     itemId = itemId,
                 )
             }
+            maintenanceDataChangeContext.notifyChanged()
             RepositoryResult.Success(DeleteRecordItemResult(deletedWholeRecord = false))
         }.getOrElse { throwable ->
             RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
