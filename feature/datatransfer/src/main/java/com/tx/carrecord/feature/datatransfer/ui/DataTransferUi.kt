@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -38,6 +39,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+private const val DATA_MANAGEMENT_HINT_TEXT =
+    "备份按车型保存保养项目配置与车辆记录。恢复会使用备份内容覆盖当前数据，且在有数据时先二次确认再清空。"
+private const val RESTORE_CONFIRM_TITLE = "确认恢复数据？"
+private const val RESTORE_CONFIRM_TEXT = "恢复会先清空当前全部数据，再导入备份文件。"
+private const val RESTORE_CONFIRM_ACTION = "确认恢复"
+private const val RESET_CONFIRM_TITLE = "确认重置数据？"
+private const val RESET_CONFIRM_TEXT = "将清空车辆、保养记录和全部保养项目，且无法恢复。"
+private const val RESET_CONFIRM_ACTION = "确认重置"
 
 data class DataTransferUiState(
     val exportJsonPendingWrite: String? = null,
@@ -101,18 +111,54 @@ class DataTransferViewModel @Inject constructor(
             }
         }
     }
+
+    fun resetAllData(onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            when (val result = backupRepository.resetBusinessData()) {
+                is RepositoryResult.Success -> {
+                    _uiState.value = _uiState.value.copy(message = "已重置全部数据")
+                    onSuccess()
+                }
+
+                is RepositoryResult.Failure -> {
+                    _uiState.value = _uiState.value.copy(message = result.error.message)
+                }
+            }
+        }
+    }
+
+    fun requestRestoreData(
+        onNeedConfirm: () -> Unit,
+        onProceedImport: () -> Unit,
+    ) {
+        viewModelScope.launch {
+            when (val result = backupRepository.hasAnyBusinessData()) {
+                is RepositoryResult.Success -> {
+                    if (result.value) {
+                        onNeedConfirm()
+                    } else {
+                        onProceedImport()
+                    }
+                }
+
+                is RepositoryResult.Failure -> {
+                    _uiState.value = _uiState.value.copy(message = result.error.message)
+                }
+            }
+        }
+    }
 }
 
 @Composable
 fun DataTransferSection(
     modifier: Modifier = Modifier,
-    hasCars: Boolean,
     onImportSuccess: () -> Unit,
     viewModel: DataTransferViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var shouldConfirmRestore by remember { mutableStateOf(false) }
+    var shouldConfirmReset by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         val json = uiState.exportJsonPendingWrite
@@ -172,18 +218,30 @@ fun DataTransferSection(
 
             Button(
                 onClick = {
-                    if (hasCars) {
-                        shouldConfirmRestore = true
-                    } else {
-                        importLauncher.launch(arrayOf("application/json", "text/plain"))
-                    }
+                    viewModel.requestRestoreData(
+                        onNeedConfirm = { shouldConfirmRestore = true },
+                        onProceedImport = {
+                            importLauncher.launch(arrayOf("application/json", "text/plain"))
+                        },
+                    )
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = "恢复数据")
             }
 
-            StatusMessage(text = "恢复会覆盖当前数据，建议先导出备份。")
+            Button(
+                onClick = { shouldConfirmReset = true },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+            ) {
+                Text(text = "重置全部数据")
+            }
+
+            StatusMessage(text = DATA_MANAGEMENT_HINT_TEXT)
             uiState.message?.let {
                 HorizontalDivider()
                 StatusMessage(text = it)
@@ -194,8 +252,8 @@ fun DataTransferSection(
     if (shouldConfirmRestore) {
         AlertDialog(
             onDismissRequest = { shouldConfirmRestore = false },
-            title = { Text(text = "确认恢复数据？") },
-            text = { Text(text = "恢复会先清空当前全部数据，再导入备份文件。") },
+            title = { Text(text = RESTORE_CONFIRM_TITLE) },
+            text = { Text(text = RESTORE_CONFIRM_TEXT) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -203,11 +261,34 @@ fun DataTransferSection(
                         importLauncher.launch(arrayOf("application/json", "text/plain"))
                     },
                 ) {
-                    Text(text = "继续恢复")
+                    Text(text = RESTORE_CONFIRM_ACTION)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { shouldConfirmRestore = false }) {
+                    Text(text = "取消")
+                }
+            },
+        )
+    }
+
+    if (shouldConfirmReset) {
+        AlertDialog(
+            onDismissRequest = { shouldConfirmReset = false },
+            title = { Text(text = RESET_CONFIRM_TITLE) },
+            text = { Text(text = RESET_CONFIRM_TEXT) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        shouldConfirmReset = false
+                        viewModel.resetAllData(onSuccess = onImportSuccess)
+                    },
+                ) {
+                    Text(text = RESET_CONFIRM_ACTION)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { shouldConfirmReset = false }) {
                     Text(text = "取消")
                 }
             },

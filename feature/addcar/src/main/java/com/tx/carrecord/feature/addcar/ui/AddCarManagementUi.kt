@@ -413,77 +413,59 @@ class AddCarViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-            when (
-                val result = carRepository.upsertCar(
-                    request = CarUpsertRequest(
-                        editingCarId = editor.editingCarId,
-                        brand = brand,
-                        modelName = modelName,
-                        mileage = mileage,
-                        purchaseDateEpochSeconds = AppTimeCodec.toEpochSecondsAtStartOfDay(
-                            date = editor.purchaseDate,
-                            zoneId = zoneId,
-                        ),
-                        disabledItemIDsRaw = editor.disabledItemIDsRaw,
-                    ),
-                )
-            ) {
-                is RepositoryResult.Success -> {
-                    val disabledItemIDsRaw = targetDrafts
-                        .filter { !it.isEnabled }
-                        .joinToString("|") { it.id }
-                    val saveOptionsResult = carRepository.saveItemOptions(
-                        request = SaveCarItemOptionsRequest(
-                            carId = result.value.carId,
-                            drafts = targetDrafts.map { draft ->
-                                CarItemOptionUpsertDraft(
-                                    id = draft.id,
-                                    name = draft.name.trim(),
-                                    isDefault = draft.isDefault,
-                                    catalogKey = draft.catalogKey,
-                                    remindByMileage = draft.remindByMileage,
-                                    mileageInterval = draft.mileageInterval,
-                                    remindByTime = draft.remindByTime,
-                                    monthInterval = draft.monthInterval,
-                                    warningStartPercent = draft.warningStartPercent,
-                                    dangerStartPercent = draft.dangerStartPercent,
-                                )
-                            },
+                val disabledItemIDsRaw = targetDrafts
+                    .filter { !it.isEnabled }
+                    .joinToString("|") { it.id }
+                when (
+                    val result = carRepository.upsertCar(
+                        request = CarUpsertRequest(
+                            editingCarId = editor.editingCarId,
+                            brand = brand,
+                            modelName = modelName,
+                            mileage = mileage,
+                            purchaseDateEpochSeconds = AppTimeCodec.toEpochSecondsAtStartOfDay(
+                                date = editor.purchaseDate,
+                                zoneId = zoneId,
+                            ),
                             disabledItemIDsRaw = disabledItemIDsRaw,
+                            itemOptionSaveRequest = SaveCarItemOptionsRequest(
+                                carId = editor.editingCarId.orEmpty(),
+                                drafts = targetDrafts.map { draft ->
+                                    CarItemOptionUpsertDraft(
+                                        id = draft.id,
+                                        name = draft.name.trim(),
+                                        isDefault = draft.isDefault,
+                                        catalogKey = draft.catalogKey,
+                                        remindByMileage = draft.remindByMileage,
+                                        mileageInterval = draft.mileageInterval,
+                                        remindByTime = draft.remindByTime,
+                                        monthInterval = draft.monthInterval,
+                                        warningStartPercent = draft.warningStartPercent,
+                                        dangerStartPercent = draft.dangerStartPercent,
+                                    )
+                                },
+                                disabledItemIDsRaw = disabledItemIDsRaw,
+                            ),
                         ),
                     )
-                    if (saveOptionsResult is RepositoryResult.Failure) {
+                ) {
+                    is RepositoryResult.Success -> {
                         _uiState.value = _uiState.value.copy(
                             appliedCarId = result.value.normalizedRawAppliedCarId,
-                            activeCarEditor = editor.copy(
-                                editingCarId = result.value.carId,
-                                disabledItemIDsRaw = disabledItemIDsRaw,
-                                itemDrafts = targetDrafts,
-                            ),
-                            editorSaveErrorMessage = saveVehicleSaveFailureMessage(saveOptionsResult.error.message),
-                            isEditorSaveErrorAlertPresented = true,
+                            activeCarEditor = null,
                             editorValidationMessage = null,
                             isEditorValidationAlertPresented = false,
+                            editorSaveErrorMessage = null,
+                            isEditorSaveErrorAlertPresented = false,
+                            message = null,
                         )
                         refreshCars()
-                        return@launch
                     }
-                    _uiState.value = _uiState.value.copy(
-                        appliedCarId = result.value.normalizedRawAppliedCarId,
-                        activeCarEditor = null,
-                        editorValidationMessage = null,
-                        isEditorValidationAlertPresented = false,
-                        editorSaveErrorMessage = null,
-                        isEditorSaveErrorAlertPresented = false,
-                        message = null,
-                    )
-                    refreshCars()
-                }
 
-                is RepositoryResult.Failure -> {
-                    showEditorSaveError(saveVehicleSaveFailureMessage(result.error.message))
+                    is RepositoryResult.Failure -> {
+                        showEditorSaveError(saveVehicleSaveFailureMessage(result.error.message))
+                    }
                 }
-            }
             } catch (_: Throwable) {
                 showEditorSaveError("保存车辆与保养项目失败，请稍后重试。")
             }
@@ -734,14 +716,9 @@ fun AddCarManagementSection(
     carAgeReferenceDate: LocalDate,
     onOpenAddCarEditorPage: () -> Unit = {},
     onOpenEditCarEditorPage: () -> Unit = {},
-    onCarsAvailabilityChange: (Boolean) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var openCarMenuKey by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(uiState.cars.isNotEmpty()) {
-        onCarsAvailabilityChange(uiState.cars.isNotEmpty())
-    }
 
     ElevatedCard(modifier = modifier.fillMaxWidth()) {
         Column(

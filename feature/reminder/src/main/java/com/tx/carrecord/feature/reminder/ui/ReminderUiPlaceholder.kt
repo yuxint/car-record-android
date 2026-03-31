@@ -36,6 +36,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.common.RepositoryResult
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig.ProgressColorLevel
+import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.core.datastore.AppliedCarContext
 import com.tx.carrecord.feature.reminder.data.ReminderRepository
 import com.tx.carrecord.feature.reminder.domain.ReminderRow
@@ -60,12 +61,14 @@ data class ReminderUiState(
 class ReminderViewModel @Inject constructor(
     private val repository: ReminderRepository,
     private val appliedCarContext: AppliedCarContext,
+    private val appDateContext: AppDateContext,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ReminderUiState(loading = true))
     val uiState: StateFlow<ReminderUiState> = _uiState.asStateFlow()
 
     init {
         observeAppliedCarChanges()
+        observeDateContext()
     }
 
     fun refresh() {
@@ -96,6 +99,14 @@ class ReminderViewModel @Inject constructor(
     private fun observeAppliedCarChanges() {
         viewModelScope.launch {
             appliedCarContext.appliedCarIdFlow
+                .distinctUntilChanged()
+                .collect { refresh() }
+        }
+    }
+
+    private fun observeDateContext() {
+        viewModelScope.launch {
+            appDateContext.nowFlow()
                 .distinctUntilChanged()
                 .collect { refresh() }
         }

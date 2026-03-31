@@ -28,6 +28,7 @@ data class CarUpsertRequest(
     val mileage: Int,
     val purchaseDateEpochSeconds: Long,
     val disabledItemIDsRaw: String,
+    val itemOptionSaveRequest: SaveCarItemOptionsRequest? = null,
 )
 
 data class CarMutationResult(
@@ -109,6 +110,18 @@ class RoomCarRepository @Inject constructor(
     private companion object {
         const val ITEM_ID_SEPARATOR: Char = '|'
     }
+
+    private class ItemOptionValidationException(
+        val error: RepositoryError,
+    ) : RuntimeException(error.message)
+
+    private data class ItemOptionSavePlan(
+        val carId: String,
+        val normalizedDrafts: List<CarItemOptionUpsertDraft>,
+        val existingById: Map<String, MaintenanceItemOptionEntity>,
+        val removingCustomOptions: List<MaintenanceItemOptionEntity>,
+        val normalizedDisabledRaw: String,
+    )
 
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
@@ -193,135 +206,17 @@ class RoomCarRepository @Inject constructor(
                     ),
                 )
 
-            if (request.drafts.isEmpty()) {
-                return RepositoryResult.Failure(
-                    RepositoryError.RuleViolation(
-                        code = "ITEM_OPTIONS_EMPTY",
-                        message = "请至少保留一个保养项目。",
-                    ),
-                )
-            }
-
-            val normalizedDrafts = request.drafts.map { draft ->
-                val normalizedName = draft.name.trim()
-                if (normalizedName.isEmpty()) {
-                    throw IllegalArgumentException("ITEM_NAME_EMPTY")
-                }
-                if (!draft.remindByMileage && !draft.remindByTime) {
-                    throw IllegalArgumentException("ITEM_NO_REMINDER")
-                }
-                draft.copy(
-                    id = draft.id.trim(),
-                    name = normalizedName,
-                    mileageInterval = if (draft.remindByMileage) draft.mileageInterval.coerceAtLeast(1) else 0,
-                    monthInterval = if (draft.remindByTime) draft.monthInterval.coerceAtLeast(1) else 0,
-                    warningStartPercent = draft.warningStartPercent.coerceAtLeast(0),
-                    dangerStartPercent = draft.dangerStartPercent.coerceAtLeast(draft.warningStartPercent.coerceAtLeast(0)),
-                )
-            }
-
-            val duplicateName = normalizedDrafts
-                .groupBy { it.name }
-                .entries
-                .firstOrNull { it.value.size > 1 }
-            if (duplicateName != null) {
-                return RepositoryResult.Failure(
-                    RepositoryError.RuleViolation(
-                        code = "ITEM_NAME_DUPLICATED",
-                        message = "存在重名项目，请先调整后再保存。",
-                    ),
-                )
-            }
-
-            val existingOptions = dao.listItemOptionsByCarId(carId)
-            val existingById = existingOptions.associateBy { it.id }
-            val targetIds = normalizedDrafts.map { it.id }.toSet()
-            val removingCustomOptions = existingOptions.filter { option ->
-                !option.isDefault && option.id !in targetIds
-            }
-
-            if (removingCustomOptions.isNotEmpty()) {
-                val recordItemIds = dao.listRecordsByCarId(carId)
-                    .flatMap { record -> parseItemIDsRaw(record.itemIDsRaw) }
-                    .toSet()
-                val blocked = removingCustomOptions.firstOrNull { option -> option.id in recordItemIds }
-                if (blocked != null) {
-                    return RepositoryResult.Failure(
-                        RepositoryError.RuleViolation(
-                            code = "ITEM_DELETE_BLOCKED",
-                            message = "自定义项目“${blocked.name}”已有历史记录，不能删除。",
-                        ),
-                    )
-                }
-            }
-
+            val plan = buildItemOptionSavePlan(
+                carId = existingCar.id,
+                request = request,
+            )
             database.withTransaction {
-                val nowEpoch = LocalDateTime.now().atZone(zoneId).toEpochSecond()
-                normalizedDrafts.forEach { draft ->
-                    val existing = existingById[draft.id]
-                    if (existing == null) {
-                        dao.insertItemOption(
-                            entity = MaintenanceItemOptionEntity(
-                                id = draft.id,
-                                name = draft.name,
-                                ownerCarID = carId,
-                                isDefault = draft.isDefault,
-                                catalogKey = draft.catalogKey,
-                                remindByMileage = draft.remindByMileage,
-                                mileageInterval = draft.mileageInterval,
-                                remindByTime = draft.remindByTime,
-                                monthInterval = draft.monthInterval,
-                                warningStartPercent = draft.warningStartPercent,
-                                dangerStartPercent = draft.dangerStartPercent,
-                                createdAt = nowEpoch,
-                            ),
-                        )
-                    } else {
-                        dao.updateItemOptionById(
-                            itemId = draft.id,
-                            name = draft.name,
-                            isDefault = draft.isDefault,
-                            catalogKey = draft.catalogKey,
-                            remindByMileage = draft.remindByMileage,
-                            mileageInterval = draft.mileageInterval,
-                            remindByTime = draft.remindByTime,
-                            monthInterval = draft.monthInterval,
-                            warningStartPercent = draft.warningStartPercent,
-                            dangerStartPercent = draft.dangerStartPercent,
-                        )
-                    }
-                }
-
-                removingCustomOptions.forEach { option ->
-                    dao.deleteItemOptionById(option.id)
-                }
-
-                val normalizedDisabledRaw = MaintenanceItemConfig.normalizeItemIDsRaw(request.disabledItemIDsRaw)
-                dao.updateCarDisabledItemIDsRaw(
-                    carId = existingCar.id,
-                    disabledItemIDsRaw = normalizedDisabledRaw,
-                )
+                persistItemOptionSavePlan(plan)
             }
 
             RepositoryResult.Success(Unit)
         }.getOrElse { throwable ->
-            when ((throwable as? IllegalArgumentException)?.message) {
-                "ITEM_NAME_EMPTY" -> RepositoryResult.Failure(
-                    RepositoryError.RuleViolation(
-                        code = "ITEM_NAME_EMPTY",
-                        message = "项目名称不能为空。",
-                    ),
-                )
-
-                "ITEM_NO_REMINDER" -> RepositoryResult.Failure(
-                    RepositoryError.RuleViolation(
-                        code = "ITEM_NO_REMINDER",
-                        message = "请至少开启一种提醒方式。",
-                    ),
-                )
-
-                else -> RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
-            }
+            mapItemOptionThrowable(throwable)
         }
     }
 
@@ -421,6 +316,14 @@ class RoomCarRepository @Inject constructor(
                         throw IllegalStateException("CAR_NOT_FOUND_FOR_UPDATE")
                     }
                 }
+
+                request.itemOptionSaveRequest?.let { itemOptionSaveRequest ->
+                    val optionPlan = buildItemOptionSavePlan(
+                        carId = targetCarId,
+                        request = itemOptionSaveRequest.copy(carId = targetCarId),
+                    )
+                    persistItemOptionSavePlan(optionPlan)
+                }
             }
 
             val allCarIds = dao.listCars().mapNotNull { entity ->
@@ -441,6 +344,9 @@ class RoomCarRepository @Inject constructor(
                         message = "未找到要更新的车辆。",
                     ),
                 )
+            }
+            if (throwable is ItemOptionValidationException) {
+                return RepositoryResult.Failure(throwable.error)
             }
             RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
         }
@@ -543,5 +449,162 @@ class RoomCarRepository @Inject constructor(
         return raw.split(ITEM_ID_SEPARATOR)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
+    }
+
+    private suspend fun buildItemOptionSavePlan(
+        carId: String,
+        request: SaveCarItemOptionsRequest,
+    ): ItemOptionSavePlan {
+        if (request.drafts.isEmpty()) {
+            throw ItemOptionValidationException(
+                RepositoryError.RuleViolation(
+                    code = "ITEM_OPTIONS_EMPTY",
+                    message = "请至少保留一个保养项目。",
+                ),
+            )
+        }
+
+        val normalizedDrafts = request.drafts.map { draft ->
+            val normalizedName = draft.name.trim()
+            if (normalizedName.isEmpty()) {
+                throw ItemOptionValidationException(
+                    RepositoryError.RuleViolation(
+                        code = "ITEM_NAME_EMPTY",
+                        message = "项目名称不能为空。",
+                    ),
+                )
+            }
+            if (!draft.remindByMileage && !draft.remindByTime) {
+                throw ItemOptionValidationException(
+                    RepositoryError.RuleViolation(
+                        code = "ITEM_NO_REMINDER",
+                        message = "请至少开启一种提醒方式。",
+                    ),
+                )
+            }
+            draft.copy(
+                id = draft.id.trim(),
+                name = normalizedName,
+                mileageInterval = if (draft.remindByMileage) draft.mileageInterval.coerceAtLeast(1) else 0,
+                monthInterval = if (draft.remindByTime) draft.monthInterval.coerceAtLeast(1) else 0,
+                warningStartPercent = draft.warningStartPercent.coerceAtLeast(0),
+                dangerStartPercent = draft.dangerStartPercent.coerceAtLeast(draft.warningStartPercent.coerceAtLeast(0)),
+            )
+        }
+
+        val duplicateName = normalizedDrafts
+            .groupBy { it.name }
+            .entries
+            .firstOrNull { it.value.size > 1 }
+        if (duplicateName != null) {
+            throw ItemOptionValidationException(
+                RepositoryError.RuleViolation(
+                    code = "ITEM_NAME_DUPLICATED",
+                    message = "存在重名项目，请先调整后再保存。",
+                ),
+            )
+        }
+
+        val existingOptions = dao.listItemOptionsByCarId(carId)
+        val existingById = existingOptions.associateBy { it.id }
+        val targetIds = normalizedDrafts.map { it.id }.toSet()
+        val removingCustomOptions = existingOptions.filter { option ->
+            !option.isDefault && option.id !in targetIds
+        }
+
+        if (removingCustomOptions.isNotEmpty()) {
+            val recordItemIds = dao.listRecordsByCarId(carId)
+                .flatMap { record -> parseItemIDsRaw(record.itemIDsRaw) }
+                .toSet()
+            val blocked = removingCustomOptions.firstOrNull { option -> option.id in recordItemIds }
+            if (blocked != null) {
+                throw ItemOptionValidationException(
+                    RepositoryError.RuleViolation(
+                        code = "ITEM_DELETE_BLOCKED",
+                        message = "自定义项目“${blocked.name}”已有历史记录，不能删除。",
+                    ),
+                )
+            }
+        }
+
+        val normalizedDisabledRaw = MaintenanceItemConfig.normalizeItemIDsRaw(request.disabledItemIDsRaw)
+        return ItemOptionSavePlan(
+            carId = carId,
+            normalizedDrafts = normalizedDrafts,
+            existingById = existingById,
+            removingCustomOptions = removingCustomOptions,
+            normalizedDisabledRaw = normalizedDisabledRaw,
+        )
+    }
+
+    private suspend fun persistItemOptionSavePlan(plan: ItemOptionSavePlan) {
+        val nowEpoch = LocalDateTime.now().atZone(zoneId).toEpochSecond()
+        plan.normalizedDrafts.forEach { draft ->
+            val existing = plan.existingById[draft.id]
+            if (existing == null) {
+                dao.insertItemOption(
+                    entity = MaintenanceItemOptionEntity(
+                        id = draft.id,
+                        name = draft.name,
+                        ownerCarID = plan.carId,
+                        isDefault = draft.isDefault,
+                        catalogKey = draft.catalogKey,
+                        remindByMileage = draft.remindByMileage,
+                        mileageInterval = draft.mileageInterval,
+                        remindByTime = draft.remindByTime,
+                        monthInterval = draft.monthInterval,
+                        warningStartPercent = draft.warningStartPercent,
+                        dangerStartPercent = draft.dangerStartPercent,
+                        createdAt = nowEpoch,
+                    ),
+                )
+            } else {
+                dao.updateItemOptionById(
+                    itemId = draft.id,
+                    name = draft.name,
+                    isDefault = draft.isDefault,
+                    catalogKey = draft.catalogKey,
+                    remindByMileage = draft.remindByMileage,
+                    mileageInterval = draft.mileageInterval,
+                    remindByTime = draft.remindByTime,
+                    monthInterval = draft.monthInterval,
+                    warningStartPercent = draft.warningStartPercent,
+                    dangerStartPercent = draft.dangerStartPercent,
+                )
+            }
+        }
+
+        plan.removingCustomOptions.forEach { option ->
+            dao.deleteItemOptionById(option.id)
+        }
+
+        dao.updateCarDisabledItemIDsRaw(
+            carId = plan.carId,
+            disabledItemIDsRaw = plan.normalizedDisabledRaw,
+        )
+    }
+
+    private fun mapItemOptionThrowable(throwable: Throwable): RepositoryResult<Unit> {
+        (throwable as? ItemOptionValidationException)?.error?.let { validationError ->
+            return RepositoryResult.Failure(validationError)
+        }
+
+        return when ((throwable as? IllegalArgumentException)?.message) {
+            "ITEM_NAME_EMPTY" -> RepositoryResult.Failure(
+                RepositoryError.RuleViolation(
+                    code = "ITEM_NAME_EMPTY",
+                    message = "项目名称不能为空。",
+                ),
+            )
+
+            "ITEM_NO_REMINDER" -> RepositoryResult.Failure(
+                RepositoryError.RuleViolation(
+                    code = "ITEM_NO_REMINDER",
+                    message = "请至少开启一种提醒方式。",
+                ),
+            )
+
+            else -> RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
+        }
     }
 }

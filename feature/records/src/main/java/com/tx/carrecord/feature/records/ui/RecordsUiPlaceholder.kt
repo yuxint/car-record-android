@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +32,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.SegmentedButton
@@ -42,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -536,7 +539,7 @@ class RecordsViewModel @Inject constructor(
         )
     }
 
-    fun confirmDeleteRecord() {
+    fun confirmDeleteRecord(onSuccess: (() -> Unit)? = null) {
         val target = _uiState.value.pendingDeleteTarget ?: return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, message = null)
@@ -560,6 +563,7 @@ class RecordsViewModel @Inject constructor(
                             message = "删除记录成功",
                         )
                         refresh()
+                        onSuccess?.invoke()
                     } else {
                         _uiState.value = _uiState.value.copy(
                             isSaving = false,
@@ -583,6 +587,7 @@ class RecordsViewModel @Inject constructor(
                                 },
                             )
                             refresh()
+                            onSuccess?.invoke()
                         }
 
                         is RepositoryResult.Failure -> {
@@ -910,6 +915,7 @@ fun RecordsScreen(
     viewModel: RecordsViewModel = hiltViewModel(),
     isAddRecordPageVisible: Boolean = false,
     onAddRecordPageVisibleChange: (Boolean) -> Unit = {},
+    onRecordsChanged: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -951,7 +957,7 @@ fun RecordsScreen(
             title = {
                 Text(
                     text = if (pendingDeleteTarget is RecordDeleteTarget.ItemRow) {
-                        "确认删除项目？"
+                        "确认删除该项目？"
                     } else {
                         "确认删除记录？"
                     },
@@ -968,7 +974,7 @@ fun RecordsScreen(
 
                     is RecordDeleteTarget.ItemRow -> {
                         Text(
-                            text = "删除后将只移除 ${formatDate(target.row.record.date)} 的“${target.row.itemName}”项目；如果这是最后一个项目，会自动删除整条记录。",
+                            text = "将删除 ${formatDate(target.row.record.date)} 的“${target.row.itemName}”保养项目，且无法恢复。若这是最后一个项目，将自动删除整条记录。",
                         )
                     }
 
@@ -977,7 +983,7 @@ fun RecordsScreen(
             },
             confirmButton = {
                 TextButton(
-                    onClick = viewModel::confirmDeleteRecord,
+                    onClick = { viewModel.confirmDeleteRecord(onRecordsChanged) },
                     enabled = uiState.isSaving == false,
                 ) {
                     Text(text = if (uiState.isSaving) "删除中" else "确认删除")
@@ -1288,7 +1294,9 @@ fun AddRecordPage(
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             )
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 0.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -1298,32 +1306,45 @@ fun AddRecordPage(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                TextField(
-                                    modifier = Modifier.weight(1f),
-                                    value = uiState.costText,
-                                    onValueChange = onCostChange,
-                                    singleLine = true,
-                                    readOnly = isCostReadOnly,
-                                    keyboardOptions = KeyboardOptions(
-                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal,
-                                        imeAction = ImeAction.Done,
-                                    ),
-                                    keyboardActions = KeyboardActions(
-                                        onDone = { keyboardController?.hide() },
-                                    ),
-                                    textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.End),
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        disabledContainerColor = Color.Transparent,
-                                        errorContainerColor = Color.Transparent,
-                                    ),
-                                )
+                                CompositionLocalProvider(
+                                    LocalMinimumInteractiveComponentSize provides 0.dp,
+                                ) {
+                                    TextField(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp),
+                                        value = uiState.costText,
+                                        onValueChange = onCostChange,
+                                        singleLine = true,
+                                        readOnly = isCostReadOnly,
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal,
+                                            imeAction = ImeAction.Done,
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onDone = { keyboardController?.hide() },
+                                        ),
+                                        textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.End),
+                                        colors = TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            disabledContainerColor = Color.Transparent,
+                                            errorContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent,
+                                            unfocusedIndicatorColor = Color.Transparent,
+                                            disabledIndicatorColor = Color.Transparent,
+                                            errorIndicatorColor = Color.Transparent,
+                                        ),
+                                    )
+                                }
                             }
+                            HorizontalDivider()
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 0.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.Top,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
                                     text = "备注（选填）",
@@ -1331,28 +1352,40 @@ fun AddRecordPage(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                TextField(
-                                    modifier = Modifier.weight(1f),
-                                    value = uiState.note,
-                                    onValueChange = onNoteChange,
-                                    minLines = 1,
-                                    maxLines = 3,
-                                    keyboardOptions = KeyboardOptions(
-                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
-                                        imeAction = ImeAction.Done,
-                                    ),
-                                    keyboardActions = KeyboardActions(
-                                        onDone = { keyboardController?.hide() },
-                                    ),
-                                    textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.End),
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        disabledContainerColor = Color.Transparent,
-                                        errorContainerColor = Color.Transparent,
-                                    ),
-                                )
+                                CompositionLocalProvider(
+                                    LocalMinimumInteractiveComponentSize provides 0.dp,
+                                ) {
+                                    TextField(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp),
+                                        value = uiState.note,
+                                        onValueChange = onNoteChange,
+                                        singleLine = true,
+                                        minLines = 1,
+                                        maxLines = 1,
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+                                            imeAction = ImeAction.Done,
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onDone = { keyboardController?.hide() },
+                                        ),
+                                        textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.End),
+                                        colors = TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            disabledContainerColor = Color.Transparent,
+                                            errorContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent,
+                                            unfocusedIndicatorColor = Color.Transparent,
+                                            disabledIndicatorColor = Color.Transparent,
+                                            errorIndicatorColor = Color.Transparent,
+                                        ),
+                                    )
+                                }
                             }
+                            HorizontalDivider()
                         }
                     }
                 }
@@ -1459,38 +1492,45 @@ fun AddRecordPage(
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     Text(
                         text = "请确认本次保养项目的下次提醒间隔，确认后再保存记录。",
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    uiState.intervalConfirmDrafts.forEach { draft ->
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = draft.name,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            )
-                            if (draft.remindByMileage) {
-                                NumberAdjustRow(
-                                    label = "里程间隔",
-                                    value = draft.mileageInterval,
-                                    step = 500,
-                                    minValue = 1_000,
-                                    maxValue = 100_000,
-                                    valueText = ::formatReminderMileageText,
-                                    onValueChange = { onIntervalConfirmMileageChange(draft.id, it) },
+                    HorizontalDivider()
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "保养项目",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                        )
+                        uiState.intervalConfirmDrafts.forEach { draft ->
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = draft.name,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                 )
-                            }
-                            if (draft.remindByTime) {
-                                YearAdjustRow(
-                                    label = "时间间隔",
-                                    value = draft.yearInterval,
-                                    step = 0.5,
-                                    minValue = 0.5,
-                                    maxValue = 10.0,
-                                    onValueChange = { onIntervalConfirmYearChange(draft.id, it) },
-                                )
+                                if (draft.remindByMileage) {
+                                    NumberAdjustRow(
+                                        label = "里程间隔",
+                                        value = draft.mileageInterval,
+                                        step = 500,
+                                        minValue = 1_000,
+                                        maxValue = 100_000,
+                                        valueText = ::formatReminderMileageText,
+                                        onValueChange = { onIntervalConfirmMileageChange(draft.id, it) },
+                                    )
+                                }
+                                if (draft.remindByTime) {
+                                    YearAdjustRow(
+                                        label = "时间间隔",
+                                        value = draft.yearInterval,
+                                        step = 0.5,
+                                        minValue = 0.5,
+                                        maxValue = 10.0,
+                                        onValueChange = { onIntervalConfirmYearChange(draft.id, it) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -1528,11 +1568,10 @@ private fun PickerFieldRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(vertical = 6.dp)
                 .let { base ->
                     if (onClick != null) {
-                        base
-                            .padding(vertical = 8.dp)
-                            .clickable { onClick() }
+                        base.clickable { onClick() }
                     } else {
                         base
                     }

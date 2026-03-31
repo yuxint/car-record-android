@@ -15,6 +15,9 @@ interface CarRecordDao {
     @Query("SELECT * FROM cars ORDER BY purchase_date ASC, id ASC")
     suspend fun listCars(): List<CarEntity>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM cars LIMIT 1)")
+    suspend fun hasCars(): Boolean
+
     @Query("SELECT * FROM cars WHERE id = :carId LIMIT 1")
     suspend fun findCarById(carId: String): CarEntity?
 
@@ -52,6 +55,9 @@ interface CarRecordDao {
 
     @Query("SELECT * FROM maintenance_records ORDER BY date ASC, mileage ASC, id ASC")
     suspend fun listRecords(): List<MaintenanceRecordEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM maintenance_records LIMIT 1)")
+    suspend fun hasRecords(): Boolean
 
     @Query("SELECT * FROM maintenance_records WHERE car_id = :carId ORDER BY date ASC, mileage ASC, id ASC")
     suspend fun listRecordsByCarId(carId: String): List<MaintenanceRecordEntity>
@@ -107,6 +113,9 @@ interface CarRecordDao {
     @Query("SELECT * FROM maintenance_item_options ORDER BY created_at ASC, id ASC")
     suspend fun listItemOptions(): List<MaintenanceItemOptionEntity>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM maintenance_item_options LIMIT 1)")
+    suspend fun hasItemOptions(): Boolean
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertItemOptions(entities: List<MaintenanceItemOptionEntity>)
 
@@ -160,6 +169,9 @@ interface CarRecordDao {
 
     @Query("DELETE FROM maintenance_record_items")
     suspend fun clearRecordItems()
+
+    @Query("SELECT EXISTS(SELECT 1 FROM maintenance_record_items LIMIT 1)")
+    suspend fun hasRecordItems(): Boolean
 
     @Query("DELETE FROM maintenance_records")
     suspend fun clearRecords()

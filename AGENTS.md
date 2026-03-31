@@ -17,4 +17,5 @@
 - 变更前先读 `docs/agents/context-routing.md`，再按模块最小清单读取，不做全量通读。
 - 若文档描述与代码实现冲突，以当前代码事实为准，并同步更新文档。
 - 若 `docs/agents/` 下文档与仓库内更近层级规则冲突，以更近规则优先。
-- 若要参考ios项目，需开启子线程来访问，只读不修改，ios项目目录：`/Users/tx/develepment/workspace/car-record`，具体阅读`/Users/tx/develepment/workspace/car-record/AGENTS.md`，参考ios项目目的是统一业务规则，逻辑，文案等，视觉和组件风格还是要按Android的Material体系处理
+- 若要参考ios项目，需开启子线程只读不修改，将结果交由主线程，ios项目目录：`/Users/tx/develepment/workspace/car-record`，具体阅读`/Users/tx/develepment/workspace/car-record/AGENTS.md`，参考ios项目目的是统一业务规则，逻辑，文案等，视觉和组件风格还是要按Android的Material体系处理
+

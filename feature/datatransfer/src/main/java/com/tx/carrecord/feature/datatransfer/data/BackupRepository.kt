@@ -33,6 +33,10 @@ interface BackupRepository {
     suspend fun exportBackupJson(): RepositoryResult<String>
 
     suspend fun importBackupJson(jsonText: String): RepositoryResult<BackupImportSummary>
+
+    suspend fun resetBusinessData(): RepositoryResult<Unit>
+
+    suspend fun hasAnyBusinessData(): RepositoryResult<Boolean>
 }
 
 class RoomBackupRepository @Inject constructor(
@@ -71,10 +75,7 @@ class RoomBackupRepository @Inject constructor(
 
             database.withTransaction {
                 if (success.plan.shouldClearBusinessDataBeforeImport) {
-                    dao.clearRecordItems()
-                    dao.clearRecords()
-                    dao.clearItemOptions()
-                    dao.clearCars()
+                    clearBusinessData()
                 }
 
                 for (carDraft in success.plan.carDrafts) {
@@ -169,6 +170,32 @@ class RoomBackupRepository @Inject constructor(
         }.getOrElse { throwable ->
             RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
         }
+    }
+
+    override suspend fun resetBusinessData(): RepositoryResult<Unit> {
+        return runCatching {
+            database.withTransaction {
+                clearBusinessData()
+            }
+            appliedCarContext.normalizeAndPersist(emptyList())
+        }.fold(
+            onSuccess = { RepositoryResult.Success(Unit) },
+            onFailure = { RepositoryResult.Failure(RoomRepositoryErrorMapper.map(it)) },
+        )
+    }
+
+    override suspend fun hasAnyBusinessData(): RepositoryResult<Boolean> = runCatching {
+        dao.hasCars() || dao.hasRecords() || dao.hasItemOptions() || dao.hasRecordItems()
+    }.fold(
+        onSuccess = { RepositoryResult.Success(it) },
+        onFailure = { RepositoryResult.Failure(RoomRepositoryErrorMapper.map(it)) },
+    )
+
+    private suspend fun clearBusinessData() {
+        dao.clearRecordItems()
+        dao.clearRecords()
+        dao.clearItemOptions()
+        dao.clearCars()
     }
 
     private fun CarEntity.toExportSnapshot(): BackupExportCarSnapshot = BackupExportCarSnapshot(

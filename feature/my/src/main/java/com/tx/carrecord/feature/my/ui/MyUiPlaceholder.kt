@@ -61,8 +61,10 @@ class MyViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(currentDate = appDateContext.now())
         }
         viewModelScope.launch {
+            val manualEnabled = appDateContext.isManualNowEnabledFlow.first()
             val manualDate = appDateContext.manualNowDateFlow.first()
             _uiState.value = _uiState.value.copy(
+                isManualNowEnabled = manualEnabled,
                 manualNowDate = manualDate,
                 manualNowDateText = appDateContext.formatShortDate(manualDate),
             )
@@ -92,6 +94,7 @@ class MyViewModel @Inject constructor(
     }
 
     fun setManualNowEnabled(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(isManualNowEnabled = enabled)
         viewModelScope.launch {
             appDateContext.setManualNowEnabled(enabled)
         }

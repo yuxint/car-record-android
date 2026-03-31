@@ -31,6 +31,7 @@ import com.tx.carrecord.feature.records.ui.AddRecordPage
 import com.tx.carrecord.feature.records.ui.RecordsScreen
 import com.tx.carrecord.feature.records.ui.RecordsViewModel
 import com.tx.carrecord.feature.datatransfer.ui.DataTransferSection
+import com.tx.carrecord.feature.reminder.ui.ReminderViewModel
 import com.tx.carrecord.feature.reminder.ui.ReminderScreen
 
 private const val OVERLAY_PAGE_ANIMATION_DURATION_MS = 260
@@ -40,13 +41,13 @@ fun CarRecordRoot(
     viewModel: AppShellViewModel = hiltViewModel(),
     addCarViewModel: AddCarViewModel = hiltViewModel(),
     recordsViewModel: RecordsViewModel = hiltViewModel(),
+    reminderViewModel: ReminderViewModel = hiltViewModel(),
 ) {
     val selectedRoute by viewModel.selectedRoute.collectAsState()
     val recordsUiState by recordsViewModel.uiState.collectAsState()
     val (isCarEditorPageVisible, setCarEditorPageVisible) = remember { mutableStateOf(false) }
     val (isRecordsAddPageVisible, setRecordsAddPageVisible) = remember { mutableStateOf(false) }
     val (isReminderAddPageVisible, setReminderAddPageVisible) = remember { mutableStateOf(false) }
-    var hasCars by remember { mutableStateOf(false) }
     val isRecordEditorPageVisible = isRecordsAddPageVisible || isReminderAddPageVisible
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -82,6 +83,7 @@ fun CarRecordRoot(
                     viewModel = recordsViewModel,
                     isAddRecordPageVisible = isRecordsAddPageVisible,
                     onAddRecordPageVisibleChange = setRecordsAddPageVisible,
+                    onRecordsChanged = reminderViewModel::refresh,
                 )
                 RootTabRoute.MY -> MyScreen(
                     modifier = Modifier.padding(contentPadding),
@@ -91,10 +93,8 @@ fun CarRecordRoot(
                         carAgeReferenceDate = state.currentDate,
                         onOpenAddCarEditorPage = { setCarEditorPageVisible(true) },
                         onOpenEditCarEditorPage = { setCarEditorPageVisible(true) },
-                        onCarsAvailabilityChange = { hasCars = it },
                     )
                     DataTransferSection(
-                        hasCars = hasCars,
                         onImportSuccess = addCarViewModel::refreshCars,
                     )
                 }
@@ -132,6 +132,7 @@ fun CarRecordRoot(
                     addCarViewModel.closeCarEditor()
                 },
                 onEditorClosed = {
+                    reminderViewModel.refresh()
                     setCarEditorPageVisible(false)
                 },
             )
@@ -164,6 +165,7 @@ fun CarRecordRoot(
                 onSaveClick = recordsViewModel::saveEditorRecord,
                 onConfirmIntervalSaveClick = {
                     recordsViewModel.confirmIntervalConfirmation {
+                        reminderViewModel.refresh()
                         if (isRecordsAddPageVisible) {
                             setRecordsAddPageVisible(false)
                         } else {
