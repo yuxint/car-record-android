@@ -14,6 +14,8 @@ class ReminderRulesTest {
                 id = "car-1",
                 mileage = 12_000,
                 purchaseDate = LocalDate.parse("2025-01-01"),
+                brand = "本田",
+                modelName = "22款思域",
             ),
             option = ReminderItemOptionSnapshot(
                 id = "item-1",
@@ -50,6 +52,8 @@ class ReminderRulesTest {
                 id = "car-1",
                 mileage = 1_200,
                 purchaseDate = LocalDate.parse("2025-01-01"),
+                brand = "本田",
+                modelName = "22款思域",
             ),
             option = ReminderItemOptionSnapshot(
                 id = "item-1",
@@ -79,6 +83,8 @@ class ReminderRulesTest {
                 id = "car-1",
                 mileage = 8_000,
                 purchaseDate = LocalDate.parse("2025-01-01"),
+                brand = "本田",
+                modelName = "22款思域",
             ),
             option = ReminderItemOptionSnapshot(
                 id = "item-1",
@@ -107,6 +113,8 @@ class ReminderRulesTest {
                 id = "car-1",
                 mileage = 2_500,
                 purchaseDate = LocalDate.parse("2025-01-01"),
+                brand = "本田",
+                modelName = "22款思域",
             ),
             option = ReminderItemOptionSnapshot(
                 id = "item-1",
@@ -166,6 +174,8 @@ class ReminderRulesTest {
             id = "car-1",
             mileage = 8_000,
             purchaseDate = LocalDate.parse("2025-01-01"),
+            brand = "本田",
+            modelName = "22款思域",
         )
         val rows = ReminderRules.buildRowsForCar(
             car = car,

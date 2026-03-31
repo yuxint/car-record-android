@@ -28,6 +28,15 @@ data class SaveRecordRequest(
     val cost: Double,
     val mileage: Int,
     val note: String,
+    val intervalDrafts: List<SaveRecordIntervalDraft> = emptyList(),
+)
+
+data class SaveRecordIntervalDraft(
+    val itemId: String,
+    val remindByMileage: Boolean,
+    val mileageInterval: Int,
+    val remindByTime: Boolean,
+    val monthInterval: Int,
 )
 
 data class SaveRecordResult(
@@ -52,6 +61,8 @@ interface RecordRepository {
     suspend fun listRecords(carId: String? = null): RepositoryResult<List<RecordSnapshot>>
 
     suspend fun saveRecord(request: SaveRecordRequest): RepositoryResult<SaveRecordResult>
+
+    suspend fun deleteRecord(recordId: String): RepositoryResult<Unit>
 }
 
 class RoomRecordRepository @Inject constructor(
@@ -158,10 +169,10 @@ class RoomRecordRepository @Inject constructor(
                         carId = recordEntity.carId,
                         date = recordEntity.date,
                         itemIDsRaw = recordEntity.itemIDsRaw,
-                        cost = recordEntity.cost,
-                        mileage = recordEntity.mileage,
-                        note = recordEntity.note,
-                        cycleKey = recordEntity.cycleKey,
+                    cost = recordEntity.cost,
+                    mileage = recordEntity.mileage,
+                    note = recordEntity.note,
+                    cycleKey = recordEntity.cycleKey,
                     )
                 }
 
@@ -177,6 +188,28 @@ class RoomRecordRepository @Inject constructor(
                         )
                     },
                 )
+
+                if (request.intervalDrafts.isNotEmpty()) {
+                    val optionIDs = request.intervalDrafts.map { it.itemId }.toSet()
+                    val availableOptions = dao.listItemOptionsByCarId(resolvedCarId)
+                        .filter { option -> option.id in optionIDs }
+                        .associateBy { it.id }
+                    request.intervalDrafts.forEach { draft ->
+                        val option = availableOptions[draft.itemId] ?: return@forEach
+                        dao.updateItemOptionById(
+                            itemId = option.id,
+                            name = option.name,
+                            isDefault = option.isDefault,
+                            catalogKey = option.catalogKey,
+                            remindByMileage = draft.remindByMileage,
+                            mileageInterval = if (draft.remindByMileage) draft.mileageInterval.coerceAtLeast(1) else 0,
+                            remindByTime = draft.remindByTime,
+                            monthInterval = if (draft.remindByTime) draft.monthInterval.coerceAtLeast(1) else 0,
+                            warningStartPercent = option.warningStartPercent,
+                            dangerStartPercent = option.dangerStartPercent,
+                        )
+                    }
+                }
 
                 if (success.plan.syncedCarMileage > car.mileage) {
                     dao.updateCarMileage(
@@ -194,6 +227,24 @@ class RoomRecordRepository @Inject constructor(
                     syncedCarMileage = success.plan.syncedCarMileage,
                 ),
             )
+        }.getOrElse { throwable ->
+            RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
+        }
+    }
+
+    override suspend fun deleteRecord(recordId: String): RepositoryResult<Unit> {
+        return runCatching {
+            val existingRecord = dao.findRecordById(recordId)
+                ?: return RepositoryResult.Failure(
+                    RepositoryError.NotFound(
+                        code = "RECORD_NOT_FOUND",
+                        message = "未找到要删除的记录。",
+                    ),
+                )
+            database.withTransaction {
+                dao.deleteRecordById(existingRecord.id)
+            }
+            RepositoryResult.Success(Unit)
         }.getOrElse { throwable ->
             RepositoryResult.Failure(RoomRepositoryErrorMapper.map(throwable))
         }

@@ -1,16 +1,18 @@
 package com.tx.carrecord.feature.reminder.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tx.carrecord.feature.records.ui.RecordsViewModel
 import com.tx.carrecord.core.common.RepositoryResult
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig.ProgressColorLevel
 import com.tx.carrecord.feature.reminder.data.ReminderRepository
@@ -88,23 +91,50 @@ class ReminderViewModel @Inject constructor(
 @Composable
 fun ReminderScreen(
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
     viewModel: ReminderViewModel = hiltViewModel(),
-    onOpenAddRecordPage: () -> Unit = {},
+    recordsViewModel: RecordsViewModel = hiltViewModel(),
+    isAddRecordPageVisible: Boolean = false,
+    onAddRecordPageVisibleChange: (Boolean) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
-    val showFab by remember(uiState.canAddRecord, scrollState) {
+    val showFab by remember(uiState.canAddRecord, scrollState, isAddRecordPageVisible) {
         derivedStateOf {
-            uiState.canAddRecord && !scrollState.isScrollInProgress
+            uiState.canAddRecord &&
+                !scrollState.isScrollInProgress &&
+                !isAddRecordPageVisible
         }
     }
 
     LaunchedEffect(Unit) {
         viewModel.refresh()
     }
+    ReminderHomeContent(
+        uiState = uiState,
+        scrollState = scrollState,
+        contentPadding = contentPadding,
+        showFab = showFab,
+        onOpenAddRecordPage = {
+            recordsViewModel.startNewRecordDraft()
+            recordsViewModel.clearMessage()
+            onAddRecordPageVisibleChange(true)
+        },
+    )
+}
 
+@Composable
+private fun ReminderHomeContent(
+    uiState: ReminderUiState,
+    scrollState: androidx.compose.foundation.ScrollState,
+    contentPadding: PaddingValues,
+    showFab: Boolean,
+    onOpenAddRecordPage: () -> Unit,
+) {
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(contentPadding),
     ) {
         Column(
             modifier = Modifier
@@ -148,6 +178,8 @@ fun ReminderScreen(
 
         AnimatedVisibility(
             visible = showFab,
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(16.dp),

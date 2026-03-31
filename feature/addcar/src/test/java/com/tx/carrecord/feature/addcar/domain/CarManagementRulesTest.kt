@@ -249,7 +249,6 @@ class CarManagementRulesTest {
             mileageIntervalSelector = { it.mileageInterval },
             remindByTimeSelector = { it.remindByTime },
             monthIntervalSelector = { it.monthInterval },
-            mileageTextFormatter = { "${it}公里" },
         )
         val summary = MaintenanceItemConfig.reminderSummaryText(
             option = CarItemOptionSnapshot(
@@ -259,7 +258,7 @@ class CarManagementRulesTest {
                 isDefault = true,
                 catalogKey = "test",
                 remindByMileage = true,
-                mileageInterval = 5000,
+                mileageInterval = 20_000,
                 remindByTime = true,
                 monthInterval = 6,
                 warningStartPercent = 100,
@@ -270,11 +269,10 @@ class CarManagementRulesTest {
             mileageIntervalSelector = { it.mileageInterval },
             remindByTimeSelector = { it.remindByTime },
             monthIntervalSelector = { it.monthInterval },
-            mileageTextFormatter = { "${it}公里" },
         )
 
         assertEquals("未设置", emptySummary)
-        assertEquals("5000公里 / 0.5年", summary)
+        assertEquals("2万公里 / 0.5年", summary)
     }
 
     @Test

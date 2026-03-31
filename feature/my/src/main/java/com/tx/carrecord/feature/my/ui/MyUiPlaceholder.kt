@@ -1,10 +1,6 @@
 package com.tx.carrecord.feature.my.ui
 
 import android.content.Context
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,7 +15,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,22 +26,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.animation.core.tween
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.datastore.AppDateContext
-import com.tx.carrecord.feature.addcar.ui.CarPurchaseDatePickerDialog
 import com.tx.carrecord.feature.addcar.ui.AddCarViewModel
+import com.tx.carrecord.feature.addcar.ui.CarPurchaseDatePickerDialog
 import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferTimeCodec
 import com.tx.carrecord.feature.datatransfer.ui.DataTransferSection
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -127,78 +117,25 @@ class MyViewModel @Inject constructor(
 fun MyScreen(
     modifier: Modifier = Modifier,
     viewModel: MyViewModel = hiltViewModel(),
+    addCarViewModel: AddCarViewModel = hiltViewModel(),
     onCarEditorPageVisibleChange: (Boolean) -> Unit = {},
 ) {
-    val addCarViewModel: AddCarViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    val navController = rememberNavController()
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val isCarEditorRoute = navBackStackEntry?.destination?.route == MY_CAR_EDITOR_ROUTE
     var showManualDateEditor by remember { mutableStateOf(false) }
     var hasCars by remember { mutableStateOf(false) }
 
-    LaunchedEffect(isCarEditorRoute) {
-        onCarEditorPageVisibleChange(isCarEditorRoute)
-    }
-
-    NavHost(
-        navController = navController,
-        startDestination = MY_HOME_ROUTE,
+    MyHomeContent(
         modifier = modifier.fillMaxSize(),
-    ) {
-        composable(
-            route = MY_HOME_ROUTE,
-            exitTransition = { ExitTransition.None },
-            popEnterTransition = { EnterTransition.None },
-        ) {
-            MyHomeContent(
-                uiState = uiState,
-                hasCars = hasCars,
-                versionName = appVersionName(context),
-                addCarViewModel = addCarViewModel,
-                onCarsAvailabilityChange = { hasCars = it },
-                onOpenCarEditor = {
-                    navController.navigate(MY_CAR_EDITOR_ROUTE) {
-                        launchSingleTop = true
-                    }
-                },
-                onSetManualNowEnabled = viewModel::setManualNowEnabled,
-                onShowManualDateEditor = { showManualDateEditor = true },
-            )
-        }
-        composable(
-            route = MY_CAR_EDITOR_ROUTE,
-            enterTransition = {
-                slideInHorizontally(
-                    animationSpec = tween(260),
-                    initialOffsetX = { fullWidth -> fullWidth },
-                )
-            },
-            popExitTransition = {
-                slideOutHorizontally(
-                    animationSpec = tween(260),
-                    targetOffsetX = { fullWidth -> fullWidth },
-                )
-            },
-        ) {
-            BackHandler {
-                navController.popBackStack()
-            }
-            com.tx.carrecord.feature.addcar.ui.AddCarEditorPage(
-                modifier = Modifier.fillMaxSize(),
-                viewModel = addCarViewModel,
-                onBackRequested = {
-                    navController.popBackStack()
-                },
-                onEditorClosed = {
-                    if (navController.currentBackStackEntry?.destination?.route == MY_CAR_EDITOR_ROUTE) {
-                        navController.popBackStack()
-                    }
-                },
-            )
-        }
-    }
+        uiState = uiState,
+        hasCars = hasCars,
+        versionName = appVersionName(context),
+        addCarViewModel = addCarViewModel,
+        onCarsAvailabilityChange = { hasCars = it },
+        onOpenCarEditor = { onCarEditorPageVisibleChange(true) },
+        onSetManualNowEnabled = viewModel::setManualNowEnabled,
+        onShowManualDateEditor = { showManualDateEditor = true },
+    )
 
     if (showManualDateEditor) {
         var manualDate by remember(uiState.manualNowDate) { mutableStateOf(uiState.manualNowDate) }
@@ -214,11 +151,9 @@ fun MyScreen(
     }
 }
 
-private const val MY_HOME_ROUTE = "my/home"
-private const val MY_CAR_EDITOR_ROUTE = "my/car_editor"
-
 @Composable
 private fun MyHomeContent(
+    modifier: Modifier = Modifier,
     uiState: MyUiState,
     hasCars: Boolean,
     versionName: String,
@@ -229,8 +164,7 @@ private fun MyHomeContent(
     onShowManualDateEditor: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),

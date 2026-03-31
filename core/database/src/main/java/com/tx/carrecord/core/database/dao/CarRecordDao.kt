@@ -83,6 +83,9 @@ interface CarRecordDao {
         cycleKey: String,
     ): Int
 
+    @Query("DELETE FROM maintenance_records WHERE id = :recordId")
+    suspend fun deleteRecordById(recordId: String): Int
+
     @Query("DELETE FROM maintenance_record_items WHERE record_id = :recordId")
     suspend fun deleteRecordItemsByRecordId(recordId: String)
 

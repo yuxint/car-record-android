@@ -70,7 +70,7 @@ class RoomReminderRepository @Inject constructor(
                 rows = emptyList(),
                 emptyMessage = "当前车辆还没有保养记录，点击右下角“+”开始新增。",
                 canAddRecord = true,
-                carDisplayName = targetCar.brand,
+                carDisplayName = "${targetCar.brand} ${targetCar.modelName}",
             )
         }
 
@@ -117,7 +117,7 @@ class RoomReminderRepository @Inject constructor(
                 now = now,
             ),
             canAddRecord = true,
-            carDisplayName = targetCar.brand,
+            carDisplayName = "${targetCar.brand} ${targetCar.modelName}",
         )
     }.fold(
         onSuccess = { RepositoryResult.Success(it) },

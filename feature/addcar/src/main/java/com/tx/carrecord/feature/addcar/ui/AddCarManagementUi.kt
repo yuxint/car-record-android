@@ -901,11 +901,11 @@ private fun CarRowCard(
             }
         }
 
-        Box(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.TopEnd)) {
+        Box(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.BottomEnd)) {
             DropdownMenu(
                 expanded = isActionsMenuOpen,
                 onDismissRequest = onActionsMenuDismiss,
-                modifier = Modifier.wrapContentSize(Alignment.TopEnd),
+                modifier = Modifier.wrapContentSize(Alignment.BottomEnd),
             ) {
                 DropdownMenuItem(
                     text = {
@@ -1382,7 +1382,7 @@ private fun MaintenanceDraftSummaryCard(
         return
     }
 
-    Box(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.TopEnd)) {
+    Box(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.BottomEnd)) {
         MaintenanceDraftSummaryCardContent(
             draft = draft,
             onClick = onClick,
@@ -1390,10 +1390,11 @@ private fun MaintenanceDraftSummaryCard(
             onEnabledChange = onEnabledChange,
         )
 
-        Box(modifier = Modifier.align(Alignment.TopEnd)) {
+        Box(modifier = Modifier.align(Alignment.BottomEnd)) {
             DropdownMenu(
                 expanded = isMenuOpen,
                 onDismissRequest = onMenuDismiss,
+                modifier = Modifier.wrapContentSize(Alignment.BottomEnd),
             ) {
                 DropdownMenuItem(
                     text = {
@@ -1496,9 +1497,7 @@ private fun DefaultBadge() {
 }
 
 private fun reminderDistanceText(value: Int): String {
-    val safeValue = value.coerceAtLeast(0)
-    val wanValue = safeValue / 10_000.0
-    return "${String.format(Locale.ROOT, "%.1f", wanValue)}万公里"
+    return MaintenanceItemConfig.formatReminderMileageText(value)
 }
 
 private fun mileageDisplayText(wan: Int, qian: Int, bai: Int): String {

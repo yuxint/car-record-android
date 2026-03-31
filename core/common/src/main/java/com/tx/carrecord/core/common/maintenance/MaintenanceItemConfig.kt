@@ -1,5 +1,7 @@
 package com.tx.carrecord.core.common.maintenance
 
+import java.util.Locale
+
 object MaintenanceItemConfig {
     private const val MODEL_KEY_SEPARATOR: Char = '|'
     private const val ITEM_ID_SEPARATOR: Char = '|'
@@ -161,7 +163,7 @@ object MaintenanceItemConfig {
         mileageIntervalSelector: (T) -> Int,
         remindByTimeSelector: (T) -> Boolean,
         monthIntervalSelector: (T) -> Int,
-        mileageTextFormatter: (Int) -> String = { "${it}公里" },
+        mileageTextFormatter: (Int) -> String = ::formatReminderMileageText,
         monthTextFormatter: (Int) -> String = ::formatMonthsAsYearsText,
     ): String {
         val parts = buildList {
@@ -221,18 +223,54 @@ object MaintenanceItemConfig {
 
     private fun normalizeText(value: String?): String = value.orEmpty().trim()
 
+    fun formatReminderMileageText(value: Int): String {
+        val safeValue = value.coerceAtLeast(0)
+        if (safeValue < 10_000) {
+            return "${safeValue}公里"
+        }
+        return formattedMileageByWanQian(safeValue)
+    }
+
     private fun modelKey(brand: String?, modelName: String?): String {
         return "${normalizeText(brand)}$MODEL_KEY_SEPARATOR${normalizeText(modelName)}"
     }
 
     private fun buildMileageDetailText(remaining: Int): String {
         if (remaining > 0) {
-            return "按里程提醒：距离下次约${remaining}公里"
+            return "按里程提醒：距离下次约${formatReminderMileageText(remaining)}"
         }
         if (remaining == 0) {
             return "按里程提醒：今日到期"
         }
-        return "按里程提醒：已超${kotlin.math.abs(remaining)}公里"
+        return "按里程提醒：已超${formatReminderMileageText(kotlin.math.abs(remaining))}"
+    }
+
+    private fun formattedMileageByWanQian(value: Int): String {
+        val wan = value / 10_000
+        val remainder = value % 10_000
+        val qian = remainder / 1_000
+        val bai = (remainder % 1_000) / 100
+
+        if (wan > 0) {
+            if (qian > 0 || bai > 0) {
+                val decimalValue = (qian * 1_000 + bai * 100) / 10_000.0
+                val fullString = String.format(Locale.CHINA, "%.1f", decimalValue)
+                val decimalPart = fullString
+                    .substringAfter('.', missingDelimiterValue = "")
+                    .replace(Regex("^0+|0+$"), "")
+                if (decimalPart.isEmpty()) {
+                    return "${wan}万公里"
+                }
+                return "${wan}.${decimalPart}万公里"
+            }
+            return "${wan}万公里"
+        }
+
+        if (qian > 0 || bai > 0) {
+            return "${value}公里"
+        }
+
+        return "0公里"
     }
 
     private fun buildTimeDetailText(remainingDays: Int): String {

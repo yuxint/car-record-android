@@ -1,22 +1,24 @@
 package com.tx.carrecord.feature.records.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import android.widget.NumberPicker
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -24,11 +26,15 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -36,6 +42,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,10 +61,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import com.tx.carrecord.core.common.RepositoryResult
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import com.tx.carrecord.core.database.dao.CarRecordDao
@@ -65,11 +68,11 @@ import com.tx.carrecord.core.database.error.RoomRepositoryErrorMapper
 import com.tx.carrecord.core.database.model.CarEntity
 import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.core.datastore.AppliedCarContext
-import com.tx.carrecord.core.datastore.RootTabRoute
 import com.tx.carrecord.feature.addcar.ui.AppDatePickerDialog
 import com.tx.carrecord.feature.addcar.ui.AppMileagePickerDialog
 import com.tx.carrecord.feature.records.data.RecordRepository
 import com.tx.carrecord.feature.records.data.RecordSnapshot
+import com.tx.carrecord.feature.records.data.SaveRecordIntervalDraft
 import com.tx.carrecord.feature.records.data.SaveRecordRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.text.NumberFormat
@@ -80,15 +83,13 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-
-private const val RECORDS_LIST_ROUTE = "records/list"
-private const val RECORDS_ADD_ROUTE = "records/add"
 
 data class RecordsUiState(
     val loading: Boolean = false,
@@ -102,6 +103,7 @@ data class RecordsUiState(
     val selectedCarId: String? = null,
     val availableItemOptions: List<RecordItemOptionChoice> = emptyList(),
     val selectedItemIds: Set<String> = emptySet(),
+    val editingRecordId: String? = null,
     val maintenanceDate: LocalDate = LocalDate.now(),
     val mileageWan: Int = 0,
     val mileageQian: Int = 0,
@@ -116,12 +118,17 @@ data class RecordsUiState(
     val isSaveErrorAlertPresented: Boolean = false,
     val intervalConfirmDrafts: List<RecordIntervalConfirmDraft> = emptyList(),
     val isIntervalConfirmPresented: Boolean = false,
+    val pendingDeleteRecord: RecordSnapshot? = null,
+    val isDeleteConfirmPresented: Boolean = false,
 )
 
 data class RecordIntervalConfirmDraft(
     val id: String,
     val name: String,
-    val summaryText: String,
+    val remindByMileage: Boolean,
+    val mileageInterval: Int,
+    val remindByTime: Boolean,
+    val yearInterval: Double,
 )
 
 data class RecordCarChoice(
@@ -207,6 +214,8 @@ class RecordsViewModel @Inject constructor(
                         isSaveErrorAlertPresented = false,
                         intervalConfirmDrafts = emptyList(),
                         isIntervalConfirmPresented = false,
+                        pendingDeleteRecord = null,
+                        isDeleteConfirmPresented = false,
                     )
                 }
 
@@ -222,9 +231,86 @@ class RecordsViewModel @Inject constructor(
                         isSaveErrorAlertPresented = false,
                         intervalConfirmDrafts = emptyList(),
                         isIntervalConfirmPresented = false,
+                        pendingDeleteRecord = null,
+                        isDeleteConfirmPresented = false,
                     )
                 }
             }
+        }
+    }
+
+    fun startNewRecordDraft() {
+        val state = _uiState.value
+        val selectedCarId = state.selectedCarId ?: state.availableCars.firstOrNull()?.id
+        val selectedCar = state.availableCars.firstOrNull { it.id == selectedCarId }
+        val mileage = mileageSegmentsFromValue(selectedCar?.mileage ?: 0)
+        _uiState.value = state.copy(
+            selectedCarId = selectedCarId,
+            selectedItemIds = emptySet(),
+            editingRecordId = null,
+            maintenanceDate = state.maintenanceDate,
+            mileageWan = mileage.wan,
+            mileageQian = mileage.qian,
+            mileageBai = mileage.bai,
+            costText = "0",
+            note = "",
+            validationMessage = null,
+            isValidationAlertPresented = false,
+            saveErrorMessage = null,
+            isSaveErrorAlertPresented = false,
+            intervalConfirmDrafts = emptyList(),
+            isIntervalConfirmPresented = false,
+            pendingDeleteRecord = null,
+            isDeleteConfirmPresented = false,
+            message = null,
+            isSaving = false,
+        )
+    }
+
+    fun openEditRecord(record: RecordSnapshot) {
+        viewModelScope.launch {
+            val car = dao.findCarById(record.carId) ?: return@launch
+            val availableItemOptions = sortItemOptionsByDefaultOrder(
+                carBrand = car.brand,
+                carModelName = car.modelName,
+                itemOptions = dao.listItemOptionsByCarId(car.id).map { option ->
+                    RecordItemOptionChoice(
+                        id = option.id,
+                        name = option.name,
+                        catalogKey = option.catalogKey,
+                        remindByMileage = option.remindByMileage,
+                        mileageInterval = option.mileageInterval,
+                        remindByTime = option.remindByTime,
+                        monthInterval = option.monthInterval,
+                    )
+                },
+            )
+            val selectedItemIds = MaintenanceItemConfig.parseItemIDs(record.itemIDsRaw)
+                .filter { itemId -> availableItemOptions.any { it.id == itemId } }
+                .toSet()
+            val mileage = mileageSegmentsFromValue(record.mileage)
+            _uiState.value = _uiState.value.copy(
+                selectedCarId = car.id,
+                availableItemOptions = availableItemOptions,
+                selectedItemIds = selectedItemIds,
+                editingRecordId = record.id,
+                maintenanceDate = record.date,
+                mileageWan = mileage.wan,
+                mileageQian = mileage.qian,
+                mileageBai = mileage.bai,
+                costText = formatCostText(record.cost),
+                note = record.note,
+                validationMessage = null,
+                isValidationAlertPresented = false,
+                saveErrorMessage = null,
+                isSaveErrorAlertPresented = false,
+                intervalConfirmDrafts = emptyList(),
+                isIntervalConfirmPresented = false,
+                pendingDeleteRecord = null,
+                isDeleteConfirmPresented = false,
+                message = null,
+                isSaving = false,
+            )
         }
     }
 
@@ -276,6 +362,8 @@ class RecordsViewModel @Inject constructor(
             isValidationAlertPresented = false,
             isIntervalConfirmPresented = false,
             intervalConfirmDrafts = emptyList(),
+            pendingDeleteRecord = null,
+            isDeleteConfirmPresented = false,
         )
     }
 
@@ -327,6 +415,70 @@ class RecordsViewModel @Inject constructor(
         )
     }
 
+    fun updateIntervalConfirmMileage(itemId: String, mileageInterval: Int) {
+        _uiState.value = _uiState.value.copy(
+            intervalConfirmDrafts = _uiState.value.intervalConfirmDrafts.map { draft ->
+                if (draft.id == itemId) {
+                    draft.copy(mileageInterval = mileageInterval.coerceIn(1_000, 100_000))
+                } else {
+                    draft
+                }
+            },
+        )
+    }
+
+    fun updateIntervalConfirmYear(itemId: String, yearInterval: Double) {
+        _uiState.value = _uiState.value.copy(
+            intervalConfirmDrafts = _uiState.value.intervalConfirmDrafts.map { draft ->
+                if (draft.id == itemId) {
+                    draft.copy(yearInterval = yearInterval.coerceIn(0.5, 10.0))
+                } else {
+                    draft
+                }
+            },
+        )
+    }
+
+    fun requestDeleteRecord(record: RecordSnapshot) {
+        _uiState.value = _uiState.value.copy(
+            pendingDeleteRecord = record,
+            isDeleteConfirmPresented = true,
+        )
+    }
+
+    fun dismissDeleteRecordConfirmation() {
+        _uiState.value = _uiState.value.copy(
+            pendingDeleteRecord = null,
+            isDeleteConfirmPresented = false,
+        )
+    }
+
+    fun confirmDeleteRecord() {
+        val record = _uiState.value.pendingDeleteRecord ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSaving = true, message = null)
+            when (val result = repository.deleteRecord(record.id)) {
+                is RepositoryResult.Success -> {
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        pendingDeleteRecord = null,
+                        isDeleteConfirmPresented = false,
+                        message = "删除记录成功",
+                    )
+                    refresh()
+                }
+
+                is RepositoryResult.Failure -> {
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        saveErrorMessage = result.error.message,
+                        isSaveErrorAlertPresented = true,
+                    )
+                }
+            }
+        }
+    }
+
     fun confirmIntervalConfirmation(onSuccess: (() -> Unit)? = null) {
         val state = _uiState.value
         val selectedCarId = state.selectedCarId
@@ -345,12 +497,22 @@ class RecordsViewModel @Inject constructor(
             when (
                 val result = repository.saveRecord(
                     SaveRecordRequest(
+                        recordId = state.editingRecordId,
                         carId = selectedCarId,
                         date = state.maintenanceDate,
                         itemIDsRaw = joinItemIDs(state.selectedItemIds, state.availableItemOptions),
                         cost = cost,
                         mileage = mileage,
                         note = state.note.trim(),
+                        intervalDrafts = state.intervalConfirmDrafts.map { draft ->
+                            SaveRecordIntervalDraft(
+                                itemId = draft.id,
+                                remindByMileage = draft.remindByMileage,
+                                mileageInterval = draft.mileageInterval,
+                                remindByTime = draft.remindByTime,
+                                monthInterval = (draft.yearInterval * 12).roundToInt().coerceAtLeast(1),
+                            )
+                        },
                     ),
                 )
             ) {
@@ -363,7 +525,8 @@ class RecordsViewModel @Inject constructor(
                         saveErrorMessage = null,
                         isSaveErrorAlertPresented = false,
                         intervalConfirmDrafts = emptyList(),
-                        message = "新增记录成功",
+                        message = if (state.editingRecordId == null) "新增记录成功" else "更新记录成功",
+                        editingRecordId = null,
                     )
                     refresh()
                     onSuccess?.invoke()
@@ -401,13 +564,10 @@ class RecordsViewModel @Inject constructor(
                 RecordIntervalConfirmDraft(
                     id = option.id,
                     name = option.name,
-                    summaryText = MaintenanceItemConfig.reminderSummaryText(
-                        option = option,
-                        remindByMileageSelector = { it.remindByMileage },
-                        mileageIntervalSelector = { it.mileageInterval },
-                        remindByTimeSelector = { it.remindByTime },
-                        monthIntervalSelector = { it.monthInterval },
-                    ),
+                    remindByMileage = option.remindByMileage,
+                    mileageInterval = option.mileageInterval.coerceAtLeast(1_000),
+                    remindByTime = option.remindByTime,
+                    yearInterval = (option.monthInterval.coerceAtLeast(1) / 12.0).coerceAtLeast(0.5),
                 )
             }
         _uiState.value = _uiState.value.copy(
@@ -595,156 +755,84 @@ class RecordsViewModel @Inject constructor(
 @Composable
 fun RecordsScreen(
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
     viewModel: RecordsViewModel = hiltViewModel(),
-    openAddRecordPageRequestNonce: String? = null,
-    openedFromRoute: RootTabRoute? = null,
-    onOpenAddRecordPageRequestConsumed: () -> Unit = {},
-    onAddRecordPageClosed: () -> Unit = {},
+    isAddRecordPageVisible: Boolean = false,
     onAddRecordPageVisibleChange: (Boolean) -> Unit = {},
-    onOpenAddRecordPage: () -> Unit = {},
-    onReturnToReminderTab: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val navController = rememberNavController()
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
-    val isOpeningAddRecordPage = openAddRecordPageRequestNonce != null && currentRoute != RECORDS_ADD_ROUTE
 
     LaunchedEffect(Unit) {
         viewModel.refresh()
     }
 
-    LaunchedEffect(currentRoute) {
-        onAddRecordPageVisibleChange(currentRoute == RECORDS_ADD_ROUTE)
-    }
-
-    LaunchedEffect(openAddRecordPageRequestNonce) {
-        if (openAddRecordPageRequestNonce == null) return@LaunchedEffect
-        viewModel.clearMessage()
-        if (currentRoute != RECORDS_ADD_ROUTE) {
-            navController.navigate(RECORDS_ADD_ROUTE) {
-                launchSingleTop = true
-            }
-        }
-        onOpenAddRecordPageRequestConsumed()
-    }
-
-    BackHandler(enabled = currentRoute == RECORDS_ADD_ROUTE) {
-        closeAddRecordPage(
-            openedFromRoute = openedFromRoute,
-            onAddRecordPageClosed = onAddRecordPageClosed,
-            onReturnToReminderTab = onReturnToReminderTab,
-            navController = navController,
-        )
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
+            .padding(contentPadding)
             .background(MaterialTheme.colorScheme.background),
     ) {
-        NavHost(
-            navController = navController,
-            startDestination = RECORDS_LIST_ROUTE,
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            composable(route = RECORDS_LIST_ROUTE) {
-                if (isOpeningAddRecordPage) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
-                    )
-                } else {
-                    RecordsListPage(
-                        uiState = uiState,
-                        onAddRecordClick = {
-                            viewModel.clearMessage()
-                            onOpenAddRecordPage()
-                        },
-                        onDisplayModeChange = viewModel::updateDisplayMode,
-                    )
-                }
-            }
-            composable(
-                route = RECORDS_ADD_ROUTE,
-                enterTransition = {
-                    slideInHorizontally(
-                        animationSpec = tween(260),
-                        initialOffsetX = { fullWidth -> fullWidth },
-                    )
-                },
-                exitTransition = {
-                    slideOutHorizontally(
-                        animationSpec = tween(260),
-                        targetOffsetX = { fullWidth -> -fullWidth },
-                    )
-                },
-                popExitTransition = {
-                    slideOutHorizontally(
-                        animationSpec = tween(260),
-                        targetOffsetX = { fullWidth -> fullWidth },
-                    )
-                },
-            ) {
-                AddRecordPage(
-                    uiState = uiState,
-                    onBackClick = {
-                        closeAddRecordPage(
-                            openedFromRoute = openedFromRoute,
-                            onAddRecordPageClosed = onAddRecordPageClosed,
-                            onReturnToReminderTab = onReturnToReminderTab,
-                            navController = navController,
-                        )
-                    },
-                    onSaveClick = viewModel::saveEditorRecord,
-                    onConfirmIntervalSaveClick = {
-                        viewModel.confirmIntervalConfirmation {
-                            closeAddRecordPage(
-                                openedFromRoute = openedFromRoute,
-                                onAddRecordPageClosed = onAddRecordPageClosed,
-                                onReturnToReminderTab = onReturnToReminderTab,
-                                navController = navController,
-                            )
-                        }
-                    },
-                    onDismissValidationAlert = viewModel::dismissValidationMessage,
-                    onDismissSaveErrorAlert = viewModel::dismissSaveErrorMessage,
-                    onDismissIntervalConfirm = viewModel::dismissIntervalConfirmation,
-                    onCarClick = { carId -> viewModel.selectEditorCar(carId) },
-                    onDateClick = viewModel::updateMaintenanceDate,
-                    onMileageClick = viewModel::updateMileage,
-                    onItemToggle = viewModel::toggleItem,
-                    onCostChange = viewModel::updateCostText,
-                    onNoteChange = viewModel::updateNote,
-                )
-            }
-        }
+        RecordsListPage(
+            uiState = uiState,
+            isAddRecordPageVisible = isAddRecordPageVisible,
+            contentPadding = contentPadding,
+            onAddRecordClick = {
+                viewModel.startNewRecordDraft()
+                viewModel.clearMessage()
+                onAddRecordPageVisibleChange(true)
+            },
+            onEditRecordClick = { record ->
+                viewModel.clearMessage()
+                viewModel.openEditRecord(record)
+                onAddRecordPageVisibleChange(true)
+            },
+            onDeleteRecordClick = viewModel::requestDeleteRecord,
+            onDisplayModeChange = viewModel::updateDisplayMode,
+        )
     }
-}
 
-private fun closeAddRecordPage(
-    openedFromRoute: RootTabRoute?,
-    onAddRecordPageClosed: () -> Unit,
-    onReturnToReminderTab: () -> Unit,
-    navController: androidx.navigation.NavHostController,
-) {
-    onAddRecordPageClosed()
-    when (openedFromRoute) {
-        RootTabRoute.REMINDER -> onReturnToReminderTab()
-        else -> navController.popBackStack()
+    if (uiState.isDeleteConfirmPresented && uiState.pendingDeleteRecord != null) {
+        val pendingDeleteRecord = uiState.pendingDeleteRecord
+        AlertDialog(
+            onDismissRequest = viewModel::dismissDeleteRecordConfirmation,
+            title = { Text(text = "确认删除记录？") },
+            text = {
+                Text(
+                    text = "删除后无法恢复，确定要删除 ${formatDate(pendingDeleteRecord?.date ?: LocalDate.now())} 的这条保养记录吗？",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = viewModel::confirmDeleteRecord,
+                    enabled = uiState.isSaving == false,
+                ) {
+                    Text(text = if (uiState.isSaving) "删除中" else "确认删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissDeleteRecordConfirmation) {
+                    Text(text = "取消")
+                }
+            },
+        )
     }
 }
 
 @Composable
 private fun RecordsListPage(
     uiState: RecordsUiState,
+    isAddRecordPageVisible: Boolean,
+    contentPadding: PaddingValues,
     onAddRecordClick: () -> Unit,
+    onEditRecordClick: (RecordSnapshot) -> Unit,
+    onDeleteRecordClick: (RecordSnapshot) -> Unit,
     onDisplayModeChange: (RecordDisplayMode) -> Unit,
 ) {
     val scrollState = rememberScrollState()
-    val showFab by remember {
-        derivedStateOf { uiState.canAddRecord && !scrollState.isScrollInProgress }
+    val showFab by remember(uiState.canAddRecord, scrollState, isAddRecordPageVisible) {
+        derivedStateOf {
+            uiState.canAddRecord && !scrollState.isScrollInProgress && !isAddRecordPageVisible
+        }
     }
     val selectedCar = uiState.availableCars.firstOrNull { it.id == uiState.selectedCarId }
     val cycleGroups = remember(uiState.records, uiState.availableItemOptions) {
@@ -770,8 +858,11 @@ private fun RecordsListPage(
         ) {
             Text(text = "保养记录", style = MaterialTheme.typography.headlineSmall)
             if (selectedCar != null) {
+                val selectedCarText = listOf(selectedCar.brand, selectedCar.modelName)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ")
                 Text(
-                    text = selectedCar.brand,
+                    text = selectedCarText,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -805,13 +896,21 @@ private fun RecordsListPage(
 
                 uiState.displayMode == RecordDisplayMode.BY_CYCLE -> {
                     cycleGroups.forEach { group ->
-                        RecordCycleGroupCard(group)
+                        RecordCycleGroupCard(
+                            group = group,
+                            onEditRecordClick = onEditRecordClick,
+                            onDeleteRecordClick = onDeleteRecordClick,
+                        )
                     }
                 }
 
                 else -> {
                     itemRows.forEach { row ->
-                        RecordItemRowCard(row)
+                        RecordItemRowCard(
+                            row = row,
+                            onEditRecordClick = onEditRecordClick,
+                            onDeleteRecordClick = onDeleteRecordClick,
+                        )
                     }
                 }
             }
@@ -823,6 +922,8 @@ private fun RecordsListPage(
 
         AnimatedVisibility(
             visible = uiState.canAddRecord && showFab,
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(16.dp),
@@ -843,6 +944,8 @@ fun AddRecordPage(
     onDismissValidationAlert: () -> Unit,
     onDismissSaveErrorAlert: () -> Unit,
     onDismissIntervalConfirm: () -> Unit,
+    onIntervalConfirmMileageChange: (String, Int) -> Unit,
+    onIntervalConfirmYearChange: (String, Double) -> Unit,
     onCarClick: (String) -> Unit,
     onDateClick: (LocalDate) -> Unit,
     onMileageClick: (Int, Int, Int) -> Unit,
@@ -876,44 +979,35 @@ fun AddRecordPage(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        androidx.compose.material3.Scaffold(
-            topBar = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .background(MaterialTheme.colorScheme.background),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(onClick = onBackClick) {
-                            Text(text = "返回")
-                        }
-                        Text(
-                            text = "新增保养记录",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                        )
-                        TextButton(
-                            onClick = onSaveClick,
-                            enabled = canSubmit,
-                        ) {
-                            Text(text = if (uiState.isSaving) "保存中" else "保存")
-                        }
-                    }
-                    HorizontalDivider()
-                }
-            },
+        Column(
             modifier = Modifier.fillMaxSize(),
-        ) { contentPadding ->
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onBackClick) {
+                    Text(text = "返回")
+                }
+                Text(
+                    text = if (uiState.editingRecordId == null) "新增保养记录" else "编辑保养记录",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                )
+                TextButton(
+                    onClick = onSaveClick,
+                    enabled = canSubmit,
+                ) {
+                    Text(text = if (uiState.isSaving) "保存中" else "保存")
+                }
+            }
+            HorizontalDivider()
+
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(contentPadding)
+                    .weight(1f)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -1018,7 +1112,6 @@ fun AddRecordPage(
                         )
                     }
                 }
-
             }
         }
     }
@@ -1168,22 +1261,41 @@ fun AddRecordPage(
             onDismissRequest = onDismissIntervalConfirm,
             title = { Text(text = "确认下次保养间隔") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     Text(
                         text = "请确认本次保养项目的下次提醒间隔，确认后再保存记录。",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     uiState.intervalConfirmDrafts.forEach { draft ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
                                 text = draft.name,
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                             )
-                            Text(
-                                text = draft.summaryText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            if (draft.remindByMileage) {
+                                NumberAdjustRow(
+                                    label = "里程间隔",
+                                    value = draft.mileageInterval,
+                                    step = 500,
+                                    minValue = 1_000,
+                                    maxValue = 100_000,
+                                    valueText = ::formatReminderMileageText,
+                                    onValueChange = { onIntervalConfirmMileageChange(draft.id, it) },
+                                )
+                            }
+                            if (draft.remindByTime) {
+                                YearAdjustRow(
+                                    label = "时间间隔",
+                                    value = draft.yearInterval,
+                                    step = 0.5,
+                                    minValue = 0.5,
+                                    maxValue = 10.0,
+                                    onValueChange = { onIntervalConfirmYearChange(draft.id, it) },
+                                )
+                            }
                         }
                     }
                 }
@@ -1259,6 +1371,115 @@ private fun PickerFieldRow(
 }
 
 @Composable
+private fun NumberAdjustRow(
+    label: String,
+    value: Int,
+    step: Int,
+    minValue: Int,
+    maxValue: Int,
+    valueText: (Int) -> String = { it.toString() },
+    onValueChange: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = "$label：${valueText(value)}")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(
+                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text(text = "-")
+            }
+            OutlinedButton(
+                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text(text = "+")
+            }
+        }
+    }
+}
+
+@Composable
+private fun YearAdjustRow(
+    label: String,
+    value: Double,
+    step: Double,
+    minValue: Double,
+    maxValue: Double,
+    onValueChange: (Double) -> Unit,
+) {
+    val displayText = yearIntervalText(value)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = "$label：$displayText")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(
+                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text(text = "-")
+            }
+            OutlinedButton(
+                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text(text = "+")
+            }
+        }
+    }
+}
+
+private fun formatReminderMileageText(value: Int): String {
+    val safeValue = value.coerceAtLeast(0)
+    if (safeValue < 10_000) {
+        return "${safeValue}公里"
+    }
+    val wan = safeValue / 10_000
+    val remainder = safeValue % 10_000
+    val qian = remainder / 1_000
+    val bai = (remainder % 1_000) / 100
+    if (qian > 0 || bai > 0) {
+        val decimalValue = (qian * 1_000 + bai * 100) / 10_000.0
+        val fullString = String.format(Locale.CHINA, "%.1f", decimalValue)
+        val decimalPart = fullString
+            .substringAfter('.', missingDelimiterValue = "")
+            .replace(Regex("^0+|0+$"), "")
+        return if (decimalPart.isEmpty()) {
+            "${wan}万公里"
+        } else {
+            "${wan}.${decimalPart}万公里"
+        }
+    }
+    return "${wan}万公里"
+}
+
+private fun yearIntervalText(value: Double): String {
+    val normalized = value.coerceAtLeast(0.5)
+    return if (normalized % 1.0 == 0.0) {
+        "${normalized.toInt()}年"
+    } else {
+        String.format(Locale.CHINA, "%.1f年", normalized)
+    }
+}
+
+private fun formatCostText(value: Double): String {
+    if (value == 0.0) return "0"
+    return String.format(Locale.CHINA, "%.2f", value)
+        .replace(Regex("\\.?0+$"), "")
+}
+
+@Composable
 private fun StatusLoading(text: String) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1303,94 +1524,209 @@ private data class RecordItemRow(
     val record: RecordSnapshot,
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecordCycleGroupCard(group: RecordCycleGroup) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+private fun RecordCycleGroupCard(
+    group: RecordCycleGroup,
+    onEditRecordClick: (RecordSnapshot) -> Unit,
+    onDeleteRecordClick: (RecordSnapshot) -> Unit,
+) {
+    val record = group.records.firstOrNull() ?: return
+    var menuExpanded by remember(group.date, record.record.id) { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { menuExpanded = true },
+                ),
+            shape = RoundedCornerShape(16.dp),
         ) {
-            Text(
-                text = formatDate(group.date),
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
-            )
-            Text(
-                text = "项目：${group.itemSummary}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "费用：${formatMoney(group.totalCost)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            group.records.forEachIndexed { index, record ->
-                if (index > 0) {
-                    HorizontalDivider()
-                }
-                RecordCycleRecordCard(record)
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = formatDate(group.date),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                )
+                Text(
+                    text = "里程：${formatMileageKm(record.record.mileage)}km",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "项目：${group.itemSummary}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "总费用：${formatMoney(group.totalCost)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Box(modifier = Modifier.align(Alignment.BottomEnd)) {
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+                modifier = Modifier.wrapContentSize(Alignment.BottomEnd),
+            ) {
+                DropdownMenuItem(
+                    text = { Text(text = "编辑") },
+                    onClick = {
+                        menuExpanded = false
+                        onEditRecordClick(record.record)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(text = "删除") },
+                    onClick = {
+                        menuExpanded = false
+                        onDeleteRecordClick(record.record)
+                    },
+                )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecordCycleRecordCard(record: RecordCycleRecord) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = "里程：${formatMileageKm(record.record.mileage)}km",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Text(
-            text = "项目：${record.itemSummary}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "费用：${formatMoney(record.record.cost)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (record.record.note.isNotBlank()) {
-            Text(
-                text = "备注：${record.record.note.trim()}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+private fun RecordCycleRecordCard(
+    record: RecordCycleRecord,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+) {
+    var menuExpanded by remember(record.record.id) { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { menuExpanded = true },
+                ),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "里程：${formatMileageKm(record.record.mileage)}km",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "项目：${record.itemSummary}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "费用：${formatMoney(record.record.cost)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (record.record.note.isNotBlank()) {
+                    Text(
+                        text = "备注：${record.record.note.trim()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        Box(modifier = Modifier.align(Alignment.BottomEnd)) {
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+                modifier = Modifier.wrapContentSize(Alignment.BottomEnd),
+            ) {
+                DropdownMenuItem(
+                    text = { Text(text = "编辑") },
+                    onClick = {
+                        menuExpanded = false
+                        onEditClick()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(text = "删除") },
+                    onClick = {
+                        menuExpanded = false
+                        onDeleteClick()
+                    },
+                )
+            }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecordItemRowCard(row: RecordItemRow) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+private fun RecordItemRowCard(
+    row: RecordItemRow,
+    onEditRecordClick: (RecordSnapshot) -> Unit,
+    onDeleteRecordClick: (RecordSnapshot) -> Unit,
+) {
+    var menuExpanded by remember(row.id) { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { menuExpanded = true },
+                ),
         ) {
-            Text(
-                text = row.itemName,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
-            )
-            Text(
-                text = "保养时间：${formatDate(row.record.date)}",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = "里程：${formatMileageKm(row.record.mileage)}km",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "费用：${formatMoney(row.record.cost)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (row.record.note.isNotBlank()) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
-                    text = "备注：${row.record.note.trim()}",
+                    text = row.itemName,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                )
+                Text(
+                    text = "日期：${formatDate(row.record.date)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "里程：${formatMileageKm(row.record.mileage)}km",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (row.record.note.isNotBlank()) {
+                    Text(
+                        text = "备注：${row.record.note.trim()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        Box(modifier = Modifier.align(Alignment.BottomEnd)) {
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+                modifier = Modifier.wrapContentSize(Alignment.BottomEnd),
+            ) {
+                DropdownMenuItem(
+                    text = { Text(text = "编辑") },
+                    onClick = {
+                        menuExpanded = false
+                        onEditRecordClick(row.record)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(text = "删除") },
+                    onClick = {
+                        menuExpanded = false
+                        onDeleteRecordClick(row.record)
+                    },
                 )
             }
         }
