@@ -70,9 +70,12 @@ fun CarRecordRoot(
                 RootTabRoute.REMINDER -> ReminderScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = contentPadding,
-                    recordsViewModel = recordsViewModel,
                     isAddRecordPageVisible = isReminderAddPageVisible,
-                    onAddRecordPageVisibleChange = setReminderAddPageVisible,
+                    onOpenAddRecordPage = {
+                        recordsViewModel.startNewRecordDraft()
+                        recordsViewModel.clearMessage()
+                        setReminderAddPageVisible(true)
+                    },
                 )
                 RootTabRoute.RECORDS -> RecordsScreen(
                     modifier = Modifier.fillMaxSize(),

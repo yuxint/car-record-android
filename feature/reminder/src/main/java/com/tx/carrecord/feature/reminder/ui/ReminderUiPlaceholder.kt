@@ -34,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.tx.carrecord.feature.records.ui.RecordsViewModel
 import com.tx.carrecord.core.common.RepositoryResult
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig.ProgressColorLevel
 import com.tx.carrecord.feature.reminder.data.ReminderRepository
@@ -93,9 +92,8 @@ fun ReminderScreen(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     viewModel: ReminderViewModel = hiltViewModel(),
-    recordsViewModel: RecordsViewModel = hiltViewModel(),
     isAddRecordPageVisible: Boolean = false,
-    onAddRecordPageVisibleChange: (Boolean) -> Unit = {},
+    onOpenAddRecordPage: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollState = rememberScrollState()
@@ -115,11 +113,7 @@ fun ReminderScreen(
         scrollState = scrollState,
         contentPadding = contentPadding,
         showFab = showFab,
-        onOpenAddRecordPage = {
-            recordsViewModel.startNewRecordDraft()
-            recordsViewModel.clearMessage()
-            onAddRecordPageVisibleChange(true)
-        },
+        onOpenAddRecordPage = onOpenAddRecordPage,
     )
 }
 
