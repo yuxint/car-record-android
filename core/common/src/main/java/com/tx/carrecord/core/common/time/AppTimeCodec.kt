@@ -1,4 +1,4 @@
-package com.tx.carrecord.feature.datatransfer.domain
+package com.tx.carrecord.core.common.time
 
 import java.time.Instant
 import java.time.LocalDate
@@ -7,7 +7,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.time.format.ResolverStyle
 
-object MyDataTransferTimeCodec {
+object AppTimeCodec {
     private val strictDateFormatter: DateTimeFormatter =
         DateTimeFormatter.ofPattern("uuuu-MM-dd").withResolverStyle(ResolverStyle.STRICT)
 

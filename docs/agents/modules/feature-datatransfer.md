@@ -5,7 +5,7 @@
 - `feature/datatransfer/src/main/java/com/tx/carrecord/feature/datatransfer/data/BackupRepository.kt`
 - `feature/datatransfer/src/main/java/com/tx/carrecord/feature/datatransfer/domain/MyDataTransferRules.kt`
 - `feature/datatransfer/src/main/java/com/tx/carrecord/feature/datatransfer/domain/MyDataTransferRuleModels.kt`
-- `feature/datatransfer/src/main/java/com/tx/carrecord/feature/datatransfer/domain/MyDataTransferTimeCodec.kt`
+- `core/common/src/main/java/com/tx/carrecord/core/common/time/AppTimeCodec.kt`
 - `feature/datatransfer/src/main/java/com/tx/carrecord/feature/datatransfer/ui/DataTransferUi.kt`
 
 ## 仅当以下改动才读

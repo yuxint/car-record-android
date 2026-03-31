@@ -60,6 +60,7 @@ import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.common.RepositoryResult
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import com.tx.carrecord.core.datastore.AppDateContext
+import com.tx.carrecord.core.common.time.AppTimeCodec
 import com.tx.carrecord.feature.addcar.data.CarItemOptionSnapshot
 import com.tx.carrecord.feature.addcar.data.CarItemOptionUpsertDraft
 import com.tx.carrecord.feature.addcar.data.CarRepository
@@ -67,7 +68,6 @@ import com.tx.carrecord.feature.addcar.data.CarUpsertRequest
 import com.tx.carrecord.feature.addcar.data.SaveCarItemOptionsRequest
 import com.tx.carrecord.feature.addcar.domain.CarManagementRules
 import com.tx.carrecord.feature.addcar.domain.CarProfileSnapshot
-import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferTimeCodec
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import java.time.ZoneId
@@ -421,7 +421,7 @@ class AddCarViewModel @Inject constructor(
                         brand = brand,
                         modelName = modelName,
                         mileage = mileage,
-                        purchaseDateEpochSeconds = MyDataTransferTimeCodec.toEpochSecondsAtStartOfDay(
+                        purchaseDateEpochSeconds = AppTimeCodec.toEpochSecondsAtStartOfDay(
                             date = editor.purchaseDate,
                             zoneId = zoneId,
                         ),
@@ -891,7 +891,7 @@ private fun CarRowCard(
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                 )
                 Text(
-                    text = "上路日期：${MyDataTransferTimeCodec.formatDate(car.purchaseDate)}  车龄：${carAgeText(car.purchaseDate, carAgeReferenceDate)}  里程：${formatMileageKm(car.mileage)}km",
+                    text = "上路日期：${AppTimeCodec.formatDate(car.purchaseDate)}  车龄：${carAgeText(car.purchaseDate, carAgeReferenceDate)}  里程：${formatMileageKm(car.mileage)}km",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1070,7 +1070,7 @@ private fun CarEditorPage(
                         }
                         LabelValueRow(
                             label = "上路日期",
-                            value = MyDataTransferTimeCodec.formatDate(purchaseDate),
+                            value = AppTimeCodec.formatDate(purchaseDate),
                             onClick = { showPurchaseDatePicker = true },
                         )
                         LabelValueRow(

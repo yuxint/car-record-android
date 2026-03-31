@@ -12,7 +12,7 @@
 - 完成 `RoomDatabase` 与最小 DAO 定义。
 
 ## 2. 已执行（原 TODO）
-- 已新增统一时间编解码入口 `MyDataTransferTimeCodec`，用于日期字符串与 epoch 秒转换。
+- 已新增统一时间编解码入口 `AppTimeCodec`，用于日期字符串与 epoch 秒转换。
 - 已将 `MyDataTransferRules` 与 `RoomBackupRepository` 的日期/时间处理统一收口到该入口。
 - 已保持 iOS JSON 契约：
   - `purchaseDate`、`log.date` 使用严格 `yyyy-MM-dd`。

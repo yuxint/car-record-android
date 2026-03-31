@@ -11,12 +11,12 @@ import com.tx.carrecord.core.database.model.MaintenanceRecordEntity
 import com.tx.carrecord.core.database.model.MaintenanceRecordItemEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
 import com.tx.carrecord.core.datastore.AppliedCarContext
+import com.tx.carrecord.core.common.time.AppTimeCodec
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportCarSnapshot
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportItemOptionSnapshot
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportRecordSnapshot
 import com.tx.carrecord.feature.datatransfer.domain.BackupImportDecision
 import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferRules
-import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferTimeCodec
 import java.time.ZoneId
 import java.util.UUID
 import javax.inject.Inject
@@ -84,7 +84,7 @@ class RoomBackupRepository @Inject constructor(
                             brand = carDraft.car.brand,
                             modelName = carDraft.car.modelName,
                             mileage = carDraft.car.mileage,
-                            purchaseDate = MyDataTransferTimeCodec.toEpochSecondsAtStartOfDay(
+                            purchaseDate = AppTimeCodec.toEpochSecondsAtStartOfDay(
                                 date = carDraft.normalizedPurchaseDate,
                                 zoneId = zoneId,
                             ),
@@ -106,7 +106,7 @@ class RoomBackupRepository @Inject constructor(
                             monthInterval = itemDraft.item.monthInterval,
                             warningStartPercent = itemDraft.item.warningStartPercent,
                             dangerStartPercent = itemDraft.item.dangerStartPercent,
-                            createdAt = MyDataTransferTimeCodec.payloadCreatedAtToEpochSeconds(
+                            createdAt = AppTimeCodec.payloadCreatedAtToEpochSeconds(
                                 itemDraft.item.createdAt,
                             ),
                         )
@@ -117,12 +117,12 @@ class RoomBackupRepository @Inject constructor(
                     importedItemOptionCount += optionEntities.size
 
                     for (recordDraft in carDraft.recordDrafts) {
-                        val cycleKey = "${carDraft.car.id}|${MyDataTransferTimeCodec.formatDate(recordDraft.normalizedDate)}"
+                        val cycleKey = "${carDraft.car.id}|${AppTimeCodec.formatDate(recordDraft.normalizedDate)}"
                         dao.insertRecord(
                             entity = MaintenanceRecordEntity(
                                 id = recordDraft.record.id,
                                 carId = carDraft.car.id,
-                                date = MyDataTransferTimeCodec.toEpochSecondsAtStartOfDay(
+                                date = AppTimeCodec.toEpochSecondsAtStartOfDay(
                                     date = recordDraft.normalizedDate,
                                     zoneId = zoneId,
                                 ),
@@ -140,7 +140,7 @@ class RoomBackupRepository @Inject constructor(
                                 recordId = recordDraft.record.id,
                                 itemId = itemId,
                                 cycleItemKey = "$cycleKey$ITEM_ID_SEPARATOR$itemId",
-                                createdAt = MyDataTransferTimeCodec.toEpochSecondsAtStartOfDay(
+                                createdAt = AppTimeCodec.toEpochSecondsAtStartOfDay(
                                     date = recordDraft.normalizedDate,
                                     zoneId = zoneId,
                                 ),
@@ -177,7 +177,7 @@ class RoomBackupRepository @Inject constructor(
         modelName = modelName,
         mileage = mileage,
         disabledItemIDsRaw = disabledItemIDsRaw,
-        purchaseDate = MyDataTransferTimeCodec.fromEpochSecondsAtZone(
+        purchaseDate = AppTimeCodec.fromEpochSecondsAtZone(
             epochSeconds = purchaseDate,
             zoneId = zoneId,
         ),
@@ -202,7 +202,7 @@ class RoomBackupRepository @Inject constructor(
     private fun MaintenanceRecordEntity.toExportSnapshot(): BackupExportRecordSnapshot = BackupExportRecordSnapshot(
         id = id,
         carId = carId,
-        date = MyDataTransferTimeCodec.fromEpochSecondsAtZone(
+        date = AppTimeCodec.fromEpochSecondsAtZone(
             epochSeconds = date,
             zoneId = zoneId,
         ),

@@ -3,6 +3,7 @@
 ## 必读
 
 - `core/common/src/main/java/com/tx/carrecord/core/common/RepositoryResult.kt`
+- `core/common/src/main/java/com/tx/carrecord/core/common/time/AppTimeCodec.kt`
 
 ## 仅当以下改动才读
 

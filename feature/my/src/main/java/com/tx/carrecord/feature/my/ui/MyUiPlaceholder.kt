@@ -32,7 +32,6 @@ import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.feature.addcar.ui.AddCarViewModel
 import com.tx.carrecord.feature.addcar.ui.CarPurchaseDatePickerDialog
-import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferTimeCodec
 import com.tx.carrecord.feature.datatransfer.ui.DataTransferSection
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate

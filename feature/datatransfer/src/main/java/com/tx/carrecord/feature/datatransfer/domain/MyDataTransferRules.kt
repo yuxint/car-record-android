@@ -1,6 +1,7 @@
 package com.tx.carrecord.feature.datatransfer.domain
 
 import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
+import com.tx.carrecord.core.common.time.AppTimeCodec
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -114,7 +115,7 @@ object MyDataTransferRules {
                             monthInterval = option.monthInterval,
                             warningStartPercent = option.warningStartPercent,
                             dangerStartPercent = option.dangerStartPercent,
-                            createdAt = MyDataTransferTimeCodec.epochSecondsToPayloadCreatedAt(
+                            createdAt = AppTimeCodec.epochSecondsToPayloadCreatedAt(
                                 option.createdAtEpochSeconds,
                             ),
                         )
@@ -127,7 +128,7 @@ object MyDataTransferRules {
                     .mapNotNull { itemId -> exportTokenByItemId[itemId.trim().uppercase()] }
                 MyDataTransferLogPayload(
                     id = normalizeUuid(record.id),
-                    date = MyDataTransferTimeCodec.formatDate(record.date),
+                    date = AppTimeCodec.formatDate(record.date),
                     itemNames = itemNames,
                     cost = record.cost,
                     mileage = record.mileage,
@@ -142,7 +143,7 @@ object MyDataTransferRules {
                     modelName = car.modelName,
                     mileage = car.mileage,
                     disabledItemIDsRaw = car.disabledItemIDsRaw,
-                    purchaseDate = MyDataTransferTimeCodec.formatDate(car.purchaseDate),
+                    purchaseDate = AppTimeCodec.formatDate(car.purchaseDate),
                 ),
                 serviceLogs = serviceLogs,
             )
@@ -192,7 +193,7 @@ object MyDataTransferRules {
                     message = "恢复失败：车辆 ID 格式非法：${car.id}。",
                 )
 
-            val normalizedPurchaseDate = MyDataTransferTimeCodec.parseDateOrNull(car.purchaseDate)
+            val normalizedPurchaseDate = AppTimeCodec.parseDateOrNull(car.purchaseDate)
             if (normalizedPurchaseDate == null) {
                 return BackupImportDecision.InvalidPayload(
                     code = 1002,
@@ -279,7 +280,7 @@ object MyDataTransferRules {
                         code = 1005,
                         message = "恢复失败：保养记录 ID 格式非法：${record.id}。",
                     )
-                val normalizedDate = MyDataTransferTimeCodec.parseDateOrNull(record.date)
+                val normalizedDate = AppTimeCodec.parseDateOrNull(record.date)
                 if (normalizedDate == null) {
                     return BackupImportDecision.InvalidPayload(
                         code = 1003,

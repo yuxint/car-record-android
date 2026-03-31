@@ -10,11 +10,11 @@ import com.tx.carrecord.core.database.model.CarEntity
 import com.tx.carrecord.core.database.model.MaintenanceItemOptionEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
 import com.tx.carrecord.core.datastore.AppliedCarContext
+import com.tx.carrecord.core.common.time.AppTimeCodec
 import com.tx.carrecord.feature.addcar.domain.CarManagementRules
 import com.tx.carrecord.feature.addcar.domain.CarProfileSnapshot
 import com.tx.carrecord.feature.addcar.domain.CarUpsertDecision
 import com.tx.carrecord.feature.addcar.domain.CarUpsertInput
-import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferTimeCodec
 import java.time.ZoneId
 import java.time.LocalDateTime
 import java.util.UUID
@@ -516,7 +516,7 @@ class RoomCarRepository @Inject constructor(
         brand = brand,
         modelName = modelName,
         mileage = mileage,
-        purchaseDate = MyDataTransferTimeCodec.fromEpochSecondsAtZone(
+        purchaseDate = AppTimeCodec.fromEpochSecondsAtZone(
             epochSeconds = purchaseDate,
             zoneId = zoneId,
         ),
