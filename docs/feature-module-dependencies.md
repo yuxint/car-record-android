@@ -6,21 +6,13 @@
 
 以各模块 `build.gradle.kts` 为准，当前 `feature` 之间的显式依赖如下：
 
-- `feature:my -> feature:addcar`
-- `feature:my -> feature:datatransfer`
 - `feature:records -> feature:addcar`
 - `feature:reminder -> feature:records`
 
 若只看目标方向，依赖图如下：
 
 ```text
-feature:datatransfer <---- feature:my
-        ^
-        |
 feature:addcar <---- feature:records <---- feature:reminder
-        ^
-        |
-     feature:my
 ```
 
 对照文件：
@@ -55,18 +47,17 @@ feature:addcar <---- feature:records <---- feature:reminder
 - 这是“通用时间编解码能力”被放进了 `datatransfer`，现在已经抽到 `core/common/time/AppTimeCodec.kt`
 - `addcar` 已经不再需要直接依赖 `feature:datatransfer`
 
-### 2.2 `feature:my -> feature:addcar`
+### 2.2 `feature:my -> feature:addcar`（已收敛）
 
-依赖内容：
+当前状态：
 
-- `AddCarViewModel`
-- `AddCarManagementSection`
-- `CarPurchaseDatePickerDialog`
+- `feature:my` 已不再直接依赖 `feature:addcar`
+- 车辆管理区块由 `app` 注入到 `MyScreen`
 
 用途：
 
-- 个人中心直接嵌入车辆管理区块
-- 调试工具里的手动日期选择直接复用车辆模块里的日期弹窗
+- 个人中心保留为展示容器
+- 车辆管理区块仍由应用壳层统一编排
 
 代码位置：
 
@@ -76,20 +67,22 @@ feature:addcar <---- feature:records <---- feature:reminder
 
 判断：
 
-- 这里混合了两类依赖：
+- 这里原本混合了两类依赖：
 - 一类是“通用 UI 组件复用”，例如日期弹窗
 - 一类是“页面聚合编排”，即 `my` 直接承载车辆管理能力
-- 前者适合抽公共；后者更适合上移到 `app`
+- 当前已把页面聚合编排上移到 `app`
 
-### 2.3 `feature:my -> feature:datatransfer`
+### 2.3 `feature:my -> feature:datatransfer`（已收敛）
 
-依赖内容：
+当前状态：
 
-- `DataTransferSection`
+- `feature:my` 已不再直接依赖 `feature:datatransfer`
+- 数据管理区块由 `app` 注入到 `MyScreen`
 
 用途：
 
-- 个人中心直接嵌入备份/恢复区块
+- 个人中心保留为展示容器
+- 备份/恢复区块由应用壳层统一编排
 
 代码位置：
 
@@ -99,7 +92,7 @@ feature:addcar <---- feature:records <---- feature:reminder
 判断：
 
 - 这属于页面聚合编排，不是底层能力复用
-- 如果后续要去掉横向依赖，优先做法不是把 `DataTransferSection` 抽到 `core`，而是让 `app` 负责组合页面区块
+- 当前已经由 `app` 负责组合页面区块
 
 ### 2.4 `feature:records -> feature:addcar`
 
@@ -239,8 +232,8 @@ feature:addcar <---- feature:records <---- feature:reminder
 
 目标：
 
-- 减少 `feature:my -> feature:addcar`
-- 减少 `feature:my -> feature:datatransfer`
+- 让 `feature:my` 不再直接依赖其他 feature 的页面块
+- 让 `app` 负责注入车辆管理和备份恢复区块
 
 建议：
 

@@ -3,6 +3,7 @@ package com.tx.carrecord.feature.my.ui
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,9 +31,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.datastore.AppDateContext
-import com.tx.carrecord.feature.addcar.ui.AddCarViewModel
-import com.tx.carrecord.feature.addcar.ui.CarPurchaseDatePickerDialog
-import com.tx.carrecord.feature.datatransfer.ui.DataTransferSection
+import com.tx.carrecord.core.common.ui.AppDatePickerDialog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
@@ -116,30 +115,25 @@ class MyViewModel @Inject constructor(
 fun MyScreen(
     modifier: Modifier = Modifier,
     viewModel: MyViewModel = hiltViewModel(),
-    addCarViewModel: AddCarViewModel = hiltViewModel(),
-    onCarEditorPageVisibleChange: (Boolean) -> Unit = {},
+    extraContent: @Composable ColumnScope.(MyUiState) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showManualDateEditor by remember { mutableStateOf(false) }
-    var hasCars by remember { mutableStateOf(false) }
 
     MyHomeContent(
         modifier = modifier.fillMaxSize(),
         uiState = uiState,
-        hasCars = hasCars,
         versionName = appVersionName(context),
-        addCarViewModel = addCarViewModel,
-        onCarsAvailabilityChange = { hasCars = it },
-        onOpenCarEditor = { onCarEditorPageVisibleChange(true) },
+        extraContent = extraContent,
         onSetManualNowEnabled = viewModel::setManualNowEnabled,
         onShowManualDateEditor = { showManualDateEditor = true },
     )
 
     if (showManualDateEditor) {
         var manualDate by remember(uiState.manualNowDate) { mutableStateOf(uiState.manualNowDate) }
-        CarPurchaseDatePickerDialog(
-            purchaseDate = manualDate,
+        AppDatePickerDialog(
+            currentDate = manualDate,
             onDismiss = { showManualDateEditor = false },
             onConfirm = {
                 manualDate = it
@@ -154,11 +148,8 @@ fun MyScreen(
 private fun MyHomeContent(
     modifier: Modifier = Modifier,
     uiState: MyUiState,
-    hasCars: Boolean,
     versionName: String,
-    addCarViewModel: AddCarViewModel,
-    onCarsAvailabilityChange: (Boolean) -> Unit,
-    onOpenCarEditor: () -> Unit,
+    extraContent: @Composable ColumnScope.(MyUiState) -> Unit,
     onSetManualNowEnabled: (Boolean) -> Unit,
     onShowManualDateEditor: () -> Unit,
 ) {
@@ -170,18 +161,7 @@ private fun MyHomeContent(
     ) {
         Text(text = "个人中心", style = MaterialTheme.typography.headlineSmall)
 
-        com.tx.carrecord.feature.addcar.ui.AddCarManagementSection(
-            viewModel = addCarViewModel,
-            carAgeReferenceDate = uiState.currentDate,
-            onOpenAddCarEditorPage = onOpenCarEditor,
-            onOpenEditCarEditorPage = onOpenCarEditor,
-            onCarsAvailabilityChange = onCarsAvailabilityChange,
-        )
-
-        DataTransferSection(
-            hasCars = hasCars,
-            onImportSuccess = addCarViewModel::refreshCars,
-        )
+        extraContent(uiState)
 
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(

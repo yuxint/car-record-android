@@ -47,6 +47,7 @@ android {
 
 dependencies {
     implementation(project(":feature:addcar"))
+    implementation(project(":feature:datatransfer"))
     implementation(project(":core:datastore"))
     implementation(project(":feature:reminder"))
     implementation(project(":feature:records"))

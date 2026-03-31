@@ -24,11 +24,13 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.tx.carrecord.core.datastore.RootTabRoute
 import com.tx.carrecord.feature.addcar.ui.AddCarEditorPage
+import com.tx.carrecord.feature.addcar.ui.AddCarManagementSection
 import com.tx.carrecord.feature.addcar.ui.AddCarViewModel
 import com.tx.carrecord.feature.my.ui.MyScreen
 import com.tx.carrecord.feature.records.ui.AddRecordPage
 import com.tx.carrecord.feature.records.ui.RecordsScreen
 import com.tx.carrecord.feature.records.ui.RecordsViewModel
+import com.tx.carrecord.feature.datatransfer.ui.DataTransferSection
 import com.tx.carrecord.feature.reminder.ui.ReminderScreen
 
 private const val OVERLAY_PAGE_ANIMATION_DURATION_MS = 260
@@ -44,6 +46,7 @@ fun CarRecordRoot(
     val (isCarEditorPageVisible, setCarEditorPageVisible) = remember { mutableStateOf(false) }
     val (isRecordsAddPageVisible, setRecordsAddPageVisible) = remember { mutableStateOf(false) }
     val (isReminderAddPageVisible, setReminderAddPageVisible) = remember { mutableStateOf(false) }
+    var hasCars by remember { mutableStateOf(false) }
     val isRecordEditorPageVisible = isRecordsAddPageVisible || isReminderAddPageVisible
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -86,9 +89,19 @@ fun CarRecordRoot(
                 )
                 RootTabRoute.MY -> MyScreen(
                     modifier = Modifier.padding(contentPadding),
-                    addCarViewModel = addCarViewModel,
-                    onCarEditorPageVisibleChange = setCarEditorPageVisible,
-                )
+                ) { state ->
+                    AddCarManagementSection(
+                        viewModel = addCarViewModel,
+                        carAgeReferenceDate = state.currentDate,
+                        onOpenAddCarEditorPage = { setCarEditorPageVisible(true) },
+                        onOpenEditCarEditorPage = { setCarEditorPageVisible(true) },
+                        onCarsAvailabilityChange = { hasCars = it },
+                    )
+                    DataTransferSection(
+                        hasCars = hasCars,
+                        onImportSuccess = addCarViewModel::refreshCars,
+                    )
+                }
             }
         }
         BackHandler(enabled = isCarEditorPageVisible) {
