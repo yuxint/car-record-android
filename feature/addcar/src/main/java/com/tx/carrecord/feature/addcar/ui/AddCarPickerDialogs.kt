@@ -25,17 +25,18 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
-import java.time.ZoneId
+import java.time.ZoneOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CarPurchaseDatePickerDialog(
-    purchaseDate: LocalDate,
+fun AppDatePickerDialog(
+    title: String,
+    currentDate: LocalDate,
     onDismiss: () -> Unit,
     onConfirm: (LocalDate) -> Unit,
 ) {
     val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = localDateToEpochMillis(purchaseDate),
+        initialSelectedDateMillis = localDateToEpochMillis(currentDate),
     )
 
     DatePickerDialog(
@@ -67,7 +68,8 @@ fun CarPurchaseDatePickerDialog(
 }
 
 @Composable
-fun CarMileagePickerDialog(
+fun AppMileagePickerDialog(
+    title: String,
     wan: Int,
     qian: Int,
     bai: Int,
@@ -80,7 +82,7 @@ fun CarMileagePickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(text = "选择里程") },
+        title = { Text(text = title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
@@ -125,6 +127,39 @@ fun CarMileagePickerDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CarPurchaseDatePickerDialog(
+    purchaseDate: LocalDate,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate) -> Unit,
+) {
+    AppDatePickerDialog(
+        title = "选择上路日期",
+        currentDate = purchaseDate,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
+    )
+}
+
+@Composable
+fun CarMileagePickerDialog(
+    wan: Int,
+    qian: Int,
+    bai: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (wan: Int, qian: Int, bai: Int) -> Unit,
+) {
+    AppMileagePickerDialog(
+        title = "选择里程",
+        wan = wan,
+        qian = qian,
+        bai = bai,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
+    )
+}
+
 @Composable
 private fun NumberWheelPicker(
     label: String,
@@ -164,5 +199,5 @@ private fun NumberWheelPicker(
 }
 
 private fun localDateToEpochMillis(date: LocalDate): Long {
-    return date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    return date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
 }

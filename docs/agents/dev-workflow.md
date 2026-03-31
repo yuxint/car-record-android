@@ -1,14 +1,12 @@
 # 本地开发与测试
 
+## 环境变量
+
+本地执行 Gradle 命令前，优先查看下面“常用命令入口”的环境变量示例。
+
 ## 常用命令入口
 
-- 全量构建：
-
-```sh
-./gradlew build
-```
-
-- 本项目本地验证通过的全量构建命令（2026-03-30）：
+- 环境变量示例：
 
 ```sh
 JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
@@ -17,27 +15,49 @@ ANDROID_HOME="/Users/tx/Library/Android/sdk" \
 ./gradlew build
 ```
 
-- 仅构建 debug：
+## 按模块验证
+
+通用命令模板：
+
+```sh
+./gradlew :<module-path>:compileDebugKotlin
+./gradlew :<module-path>:test
+./gradlew :<module-path>:lint
+```
+
+模块路径列表：
+
+- `app`
+- `core:common`
+- `core:database`
+- `core:datastore`
+- `feature:addcar`
+- `feature:datatransfer`
+- `feature:reminder`
+- `feature:records`
+- `feature:my`
+
+示例：
+
+```sh
+./gradlew :feature:addcar:compileDebugKotlin
+./gradlew :feature:addcar:test
+./gradlew :feature:addcar:lint
+```
+
+## 全量命令
+
+```sh
+./gradlew build
+```
+
+## 仅构建 debug
 
 ```sh
 ./gradlew assembleDebug
 ```
 
-- 运行单元测试：
-
-```sh
-./gradlew test
-```
-
-- 指定模块测试（示例）：
-
-```sh
-./gradlew :feature:my:test
-./gradlew :feature:records:test
-./gradlew :feature:reminder:test
-```
-
-- 静态检查：
+- 全局静态检查：
 
 ```sh
 ./gradlew lint
@@ -46,4 +66,3 @@ ANDROID_HOME="/Users/tx/Library/Android/sdk" \
 ## 执行建议
 
 - 优先先跑“改动相关模块”的最小验证，再视情况补全量验证。
-- 若遇环境问题，优先检查本地 JDK/Android SDK 与 Gradle 配置是否一致。

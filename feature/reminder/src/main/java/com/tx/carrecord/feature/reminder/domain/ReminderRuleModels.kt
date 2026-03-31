@@ -7,11 +7,14 @@ data class ReminderCarSnapshot(
     val id: String,
     val mileage: Int,
     val purchaseDate: LocalDate,
+    val brand: String,
+    val modelName: String,
 )
 
 data class ReminderItemOptionSnapshot(
     val id: String,
     val name: String,
+    val catalogKey: String? = null,
     val remindByMileage: Boolean,
     val mileageInterval: Int,
     val remindByTime: Boolean,

@@ -13,16 +13,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,10 +36,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.datastore.AppDateContext
-import com.tx.carrecord.core.datastore.AppNavigationContext
-import com.tx.carrecord.core.datastore.RootTabRoute
-import com.tx.carrecord.feature.addcar.ui.AddCarEditorPage
-import com.tx.carrecord.feature.addcar.ui.AddCarManagementSection
+import com.tx.carrecord.feature.addcar.ui.CarPurchaseDatePickerDialog
 import com.tx.carrecord.feature.addcar.ui.AddCarViewModel
 import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferTimeCodec
 import com.tx.carrecord.feature.datatransfer.ui.DataTransferSection
@@ -57,23 +50,35 @@ import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class MyUiState(
     val isManualNowEnabled: Boolean = false,
     val manualNowDateText: String = "",
+    val manualNowDate: LocalDate = LocalDate.of(1970, 1, 1),
+    val currentDate: LocalDate = LocalDate.of(1970, 1, 1),
     val message: String? = null,
 )
 
 @HiltViewModel
 class MyViewModel @Inject constructor(
     private val appDateContext: AppDateContext,
-    private val appNavigationContext: AppNavigationContext,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(MyUiState())
     val uiState: StateFlow<MyUiState> = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(currentDate = appDateContext.now())
+        }
+        viewModelScope.launch {
+            val manualDate = appDateContext.manualNowDateFlow.first()
+            _uiState.value = _uiState.value.copy(
+                manualNowDate = manualDate,
+                manualNowDateText = appDateContext.formatShortDate(manualDate),
+            )
+        }
         observeDateContext()
     }
 
@@ -86,8 +91,14 @@ class MyViewModel @Inject constructor(
         viewModelScope.launch {
             appDateContext.manualNowDateFlow.collect { date ->
                 _uiState.value = _uiState.value.copy(
+                    manualNowDate = date,
                     manualNowDateText = appDateContext.formatShortDate(date),
                 )
+            }
+        }
+        viewModelScope.launch {
+            appDateContext.nowFlow().collect { date ->
+                _uiState.value = _uiState.value.copy(currentDate = date)
             }
         }
     }
@@ -109,12 +120,6 @@ class MyViewModel @Inject constructor(
 
     fun showMessage(message: String) {
         _uiState.value = _uiState.value.copy(message = message)
-    }
-
-    fun goToRecordsTab() {
-        viewModelScope.launch {
-            appNavigationContext.requestNavigation(RootTabRoute.RECORDS)
-        }
     }
 }
 
@@ -159,7 +164,6 @@ fun MyScreen(
                     }
                 },
                 onSetManualNowEnabled = viewModel::setManualNowEnabled,
-                onGoToRecordsTab = viewModel::goToRecordsTab,
                 onShowManualDateEditor = { showManualDateEditor = true },
             )
         }
@@ -181,7 +185,7 @@ fun MyScreen(
             BackHandler {
                 navController.popBackStack()
             }
-            AddCarEditorPage(
+            com.tx.carrecord.feature.addcar.ui.AddCarEditorPage(
                 modifier = Modifier.fillMaxSize(),
                 viewModel = addCarViewModel,
                 onBackRequested = {
@@ -197,38 +201,14 @@ fun MyScreen(
     }
 
     if (showManualDateEditor) {
-        var manualDateText by remember(uiState.manualNowDateText) { mutableStateOf(uiState.manualNowDateText) }
-        AlertDialog(
-            onDismissRequest = { showManualDateEditor = false },
-            title = { Text(text = "设置手动日期") },
-            text = {
-                OutlinedTextField(
-                    value = manualDateText,
-                    onValueChange = { manualDateText = it },
-                    label = { Text("日期（yyyy-MM-dd）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val parsed = MyDataTransferTimeCodec.parseDateOrNull(manualDateText)
-                        if (parsed == null) {
-                            viewModel.showMessage("手动日期格式错误，请使用 yyyy-MM-dd")
-                            return@TextButton
-                        }
-                        viewModel.setManualNowDate(parsed)
-                        showManualDateEditor = false
-                    },
-                ) {
-                    Text(text = "应用")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showManualDateEditor = false }) {
-                    Text(text = "取消")
-                }
+        var manualDate by remember(uiState.manualNowDate) { mutableStateOf(uiState.manualNowDate) }
+        CarPurchaseDatePickerDialog(
+            purchaseDate = manualDate,
+            onDismiss = { showManualDateEditor = false },
+            onConfirm = {
+                manualDate = it
+                viewModel.setManualNowDate(it)
+                showManualDateEditor = false
             },
         )
     }
@@ -246,7 +226,6 @@ private fun MyHomeContent(
     onCarsAvailabilityChange: (Boolean) -> Unit,
     onOpenCarEditor: () -> Unit,
     onSetManualNowEnabled: (Boolean) -> Unit,
-    onGoToRecordsTab: () -> Unit,
     onShowManualDateEditor: () -> Unit,
 ) {
     Column(
@@ -258,8 +237,9 @@ private fun MyHomeContent(
     ) {
         Text(text = "个人中心", style = MaterialTheme.typography.headlineSmall)
 
-        AddCarManagementSection(
+        com.tx.carrecord.feature.addcar.ui.AddCarManagementSection(
             viewModel = addCarViewModel,
+            carAgeReferenceDate = uiState.currentDate,
             onOpenAddCarEditorPage = onOpenCarEditor,
             onOpenEditCarEditorPage = onOpenCarEditor,
             onCarsAvailabilityChange = onCarsAvailabilityChange,
@@ -269,31 +249,6 @@ private fun MyHomeContent(
             hasCars = hasCars,
             onImportSuccess = addCarViewModel::refreshCars,
         )
-
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "快捷操作",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                )
-                FilledTonalButton(
-                    onClick = addCarViewModel::refreshCars,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = "刷新车辆")
-                }
-
-                Button(
-                    onClick = onGoToRecordsTab,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = "去保养记录")
-                }
-            }
-        }
 
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(

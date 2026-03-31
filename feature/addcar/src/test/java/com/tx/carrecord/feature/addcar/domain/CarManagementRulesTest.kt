@@ -278,6 +278,34 @@ class CarManagementRulesTest {
     }
 
     @Test
+    fun progressColorLevel_阈值应固定为100和125() {
+        assertEquals(
+            MaintenanceItemConfig.ProgressColorLevel.NORMAL,
+            MaintenanceItemConfig.progressColorLevel(
+                rawPercent = 99.9,
+                warningStartPercent = 100,
+                dangerStartPercent = 125,
+            ),
+        )
+        assertEquals(
+            MaintenanceItemConfig.ProgressColorLevel.WARNING,
+            MaintenanceItemConfig.progressColorLevel(
+                rawPercent = 100.0,
+                warningStartPercent = 100,
+                dangerStartPercent = 125,
+            ),
+        )
+        assertEquals(
+            MaintenanceItemConfig.ProgressColorLevel.DANGER,
+            MaintenanceItemConfig.progressColorLevel(
+                rawPercent = 125.0,
+                warningStartPercent = 100,
+                dangerStartPercent = 125,
+            ),
+        )
+    }
+
+    @Test
     fun filterDisabledOptions_默认过滤禁用项_可按需保留禁用项() {
         val options = listOf(
             CarItemOptionSnapshot(

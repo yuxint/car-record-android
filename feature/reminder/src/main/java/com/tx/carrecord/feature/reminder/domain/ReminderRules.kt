@@ -32,7 +32,16 @@ object ReminderRules {
         latestRecordIndex: Map<String, ReminderRecordSnapshot>,
         now: LocalDate,
     ): List<ReminderRow> {
-        return options
+        val sortedOptions = MaintenanceItemConfig.sortItemOptionsByDefaultOrder(
+            options = options,
+            defaultOrderByKey = MaintenanceItemConfig.modelConfig(
+                brand = car.brand,
+                modelName = car.modelName,
+            ).defaultOrderByKey,
+            catalogKeySelector = { it.catalogKey },
+        )
+
+        return sortedOptions
             .map { option ->
                 val key = latestLogKey(carId = car.id, itemId = option.id)
                 buildReminderRow(

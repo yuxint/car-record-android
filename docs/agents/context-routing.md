@@ -34,6 +34,8 @@
   - 补读 `docs/agents/gradle-wiring-rules.md`
 - 触发“架构边界、命名、文案、通用约束”：
   - 补读 `docs/agents/business-constraints.md`
+- 触发“本地构建、测试、静态检查或验证命令”：
+  - 补读 `docs/agents/dev-workflow.md`，先确认“常用命令入口”里的本地 JDK/SDK/Gradle 环境变量要求
 
 ## 跨模块影响检查（提交前）
 

@@ -3,16 +3,25 @@ package com.tx.carrecord.feature.addcar.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.background
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +52,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -61,6 +71,9 @@ import com.tx.carrecord.feature.datatransfer.domain.MyDataTransferTimeCodec
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
+import java.util.Locale
+import java.text.NumberFormat
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -115,12 +128,6 @@ data class CarEditorState(
     val itemDrafts: List<ItemRuleDraft> = emptyList(),
 )
 
-data class ItemConfigEditorState(
-    val carId: String,
-    val carDisplayName: String,
-    val drafts: List<ItemRuleDraft>,
-)
-
 data class ItemRuleDraft(
     val id: String,
     val name: String,
@@ -140,7 +147,6 @@ data class AddCarUiState(
     val cars: List<CarProfileSnapshot> = emptyList(),
     val appliedCarId: String = "",
     val activeCarEditor: CarEditorState? = null,
-    val activeItemConfigEditor: ItemConfigEditorState? = null,
     val pendingDeleteCar: CarProfileSnapshot? = null,
     val editorValidationMessage: String? = null,
     val isEditorValidationAlertPresented: Boolean = false,
@@ -387,6 +393,10 @@ class AddCarViewModel @Inject constructor(
             )
             return
         }
+        if (targetDrafts.any { it.name.trim().isEmpty() }) {
+            showEditorValidationMessage("项目名称不能为空。")
+            return
+        }
         val duplicateName = targetDrafts
             .map { it.name.trim() }
             .filter { it.isNotEmpty() }
@@ -397,16 +407,13 @@ class AddCarViewModel @Inject constructor(
             showEditorValidationMessage("存在重名项目，请先调整后再保存。")
             return
         }
-        if (targetDrafts.any { it.name.trim().isEmpty() }) {
-            showEditorValidationMessage("项目名称不能为空。")
-            return
-        }
         if (targetDrafts.any { !it.remindByMileage && !it.remindByTime }) {
             showEditorValidationMessage("请至少开启一种提醒方式。")
             return
         }
 
         viewModelScope.launch {
+            try {
             when (
                 val result = carRepository.upsertCar(
                     request = CarUpsertRequest(
@@ -477,6 +484,9 @@ class AddCarViewModel @Inject constructor(
                 is RepositoryResult.Failure -> {
                     showEditorSaveError(saveVehicleSaveFailureMessage(result.error.message))
                 }
+            }
+            } catch (_: Throwable) {
+                showEditorSaveError("保存车辆与保养项目失败，请稍后重试。")
             }
         }
     }
@@ -590,143 +600,9 @@ class AddCarViewModel @Inject constructor(
                 mileageInterval = option.mileageInterval,
                 remindByTime = option.remindByTime,
                 monthInterval = option.monthInterval,
-                warningStartPercent = option.warningStartPercent,
-                dangerStartPercent = option.dangerStartPercent,
+                warningStartPercent = MaintenanceItemConfig.warningRangeStartPercent,
+                dangerStartPercent = MaintenanceItemConfig.dangerStartPercent,
             )
-        }
-    }
-
-    fun openItemConfigEditor(car: CarProfileSnapshot) {
-        viewModelScope.launch {
-            when (val result = carRepository.listItemOptionsByCarId(car.id)) {
-                is RepositoryResult.Success -> {
-                    val snapshots = if (result.value.isEmpty()) {
-                        val defaults = carRepository.modelItemDefaults(car.brand, car.modelName)
-                        defaults.defaultItemDefinitions.map { definition ->
-                            CarItemOptionSnapshot(
-                                id = UUID.randomUUID().toString(),
-                                name = definition.defaultName,
-                                ownerCarId = car.id,
-                                isDefault = true,
-                                catalogKey = definition.key,
-                                remindByMileage = definition.remindByMileage,
-                                mileageInterval = definition.mileageInterval ?: 5000,
-                                remindByTime = definition.remindByTime,
-                                monthInterval = definition.monthInterval ?: 12,
-                                warningStartPercent = definition.warningStartPercent,
-                                dangerStartPercent = definition.dangerStartPercent,
-                                createdAtEpochSeconds = 0L,
-                            )
-                        }
-                    } else {
-                        val defaultOrderByKey = carRepository.modelItemDefaults(car.brand, car.modelName).defaultOrderByKey
-                        MaintenanceItemConfig.sortItemOptionsByDefaultOrder(
-                            options = result.value,
-                            defaultOrderByKey = defaultOrderByKey,
-                            catalogKeySelector = { it.catalogKey },
-                        )
-                    }
-
-                    val disabledIds = MaintenanceItemConfig.parseItemIDs(car.disabledItemIDsRaw).toSet()
-                    _uiState.value = _uiState.value.copy(
-                        activeItemConfigEditor = ItemConfigEditorState(
-                            carId = car.id,
-                            carDisplayName = "${car.brand} ${car.modelName}",
-                            drafts = snapshots.map { option ->
-                                ItemRuleDraft(
-                                    id = option.id,
-                                    name = option.name,
-                                    isDefault = option.isDefault,
-                                    catalogKey = option.catalogKey,
-                                    isEnabled = option.id !in disabledIds,
-                                    remindByMileage = option.remindByMileage,
-                                    mileageInterval = option.mileageInterval,
-                                    remindByTime = option.remindByTime,
-                                    monthInterval = option.monthInterval,
-                                    warningStartPercent = option.warningStartPercent,
-                                    dangerStartPercent = option.dangerStartPercent,
-                                )
-                            },
-                        ),
-                    )
-                }
-
-                is RepositoryResult.Failure -> {
-                    _uiState.value = _uiState.value.copy(message = result.error.message)
-                }
-            }
-        }
-    }
-
-    fun closeItemConfigEditor() {
-        _uiState.value = _uiState.value.copy(activeItemConfigEditor = null)
-    }
-
-    fun saveItemConfig(
-        editor: ItemConfigEditorState,
-        drafts: List<ItemRuleDraft>,
-    ) {
-        if (drafts.none { it.isEnabled }) {
-            _uiState.value = _uiState.value.copy(message = "请至少保留一个保养项目。")
-            return
-        }
-        viewModelScope.launch {
-            val duplicateName = drafts
-                .map { it.name.trim() }
-                .filter { it.isNotEmpty() }
-                .groupBy { it }
-                .entries
-                .firstOrNull { it.value.size > 1 }
-            if (duplicateName != null) {
-                _uiState.value = _uiState.value.copy(message = "存在重名项目，请先调整后再保存。")
-                return@launch
-            }
-
-            if (drafts.any { it.name.trim().isEmpty() }) {
-                _uiState.value = _uiState.value.copy(message = "项目名称不能为空。")
-                return@launch
-            }
-            if (drafts.any { !it.remindByMileage && !it.remindByTime }) {
-                _uiState.value = _uiState.value.copy(message = "请至少开启一种提醒方式。")
-                return@launch
-            }
-
-            when (
-                val result = carRepository.saveItemOptions(
-                    request = SaveCarItemOptionsRequest(
-                        carId = editor.carId,
-                        drafts = drafts.map { draft ->
-                            CarItemOptionUpsertDraft(
-                                id = draft.id,
-                                name = draft.name.trim(),
-                                isDefault = draft.isDefault,
-                                catalogKey = draft.catalogKey,
-                                remindByMileage = draft.remindByMileage,
-                                mileageInterval = draft.mileageInterval,
-                                remindByTime = draft.remindByTime,
-                                monthInterval = draft.monthInterval,
-                                warningStartPercent = draft.warningStartPercent,
-                                dangerStartPercent = draft.dangerStartPercent,
-                            )
-                        },
-                        disabledItemIDsRaw = drafts
-                            .filter { !it.isEnabled }
-                            .joinToString("|") { it.id },
-                    ),
-                )
-            ) {
-                is RepositoryResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        activeItemConfigEditor = null,
-                        message = "保养项目规则已更新",
-                    )
-                    refreshCars()
-                }
-
-                is RepositoryResult.Failure -> {
-                    _uiState.value = _uiState.value.copy(message = result.error.message)
-                }
-            }
         }
     }
 
@@ -736,7 +612,6 @@ class AddCarViewModel @Inject constructor(
                 is RepositoryResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         appliedCarId = result.value,
-                        message = "已应用车型",
                     )
                 }
 
@@ -789,9 +664,11 @@ fun AddCarEditorPage(
     val uiState by viewModel.uiState.collectAsState()
     val editor = uiState.activeCarEditor
     var hasShownEditor by remember { mutableStateOf(false) }
+    var lastVisibleEditor by remember { mutableStateOf<CarEditorState?>(null) }
 
     if (editor != null) {
         hasShownEditor = true
+        lastVisibleEditor = editor
     }
 
     LaunchedEffect(editor, hasShownEditor) {
@@ -800,7 +677,8 @@ fun AddCarEditorPage(
         }
     }
 
-    if (editor == null) return
+    val visibleEditor = editor ?: lastVisibleEditor
+    if (visibleEditor == null) return
 
     Box(
         modifier = modifier
@@ -809,7 +687,7 @@ fun AddCarEditorPage(
     ) {
         CarEditorPage(
             modifier = Modifier.fillMaxSize(),
-            editor = editor,
+            editor = visibleEditor,
             onBack = onBackRequested,
             onSave = { currentEditor, drafts ->
                 viewModel.saveCar(
@@ -854,11 +732,13 @@ fun AddCarEditorPage(
 fun AddCarManagementSection(
     modifier: Modifier = Modifier,
     viewModel: AddCarViewModel = hiltViewModel(),
+    carAgeReferenceDate: LocalDate,
     onOpenAddCarEditorPage: () -> Unit = {},
     onOpenEditCarEditorPage: () -> Unit = {},
     onCarsAvailabilityChange: (Boolean) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var openCarMenuKey by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(uiState.cars.isNotEmpty()) {
         onCarsAvailabilityChange(uiState.cars.isNotEmpty())
@@ -881,12 +761,19 @@ fun AddCarManagementSection(
                         CarRowCard(
                             car = car,
                             isApplied = car.id == uiState.appliedCarId,
+                            carAgeReferenceDate = carAgeReferenceDate,
+                            isActionsMenuOpen = openCarMenuKey == car.id,
+                            onActionsMenuOpen = { openCarMenuKey = car.id },
+                            onActionsMenuDismiss = {
+                                if (openCarMenuKey == car.id) {
+                                    openCarMenuKey = null
+                                }
+                            },
                             onApply = { viewModel.applyCar(car.id) },
                             onEdit = {
                                 viewModel.openEditCarEditor(car)
                                 onOpenEditCarEditorPage()
                             },
-                            onEditItemConfig = { viewModel.openItemConfigEditor(car) },
                             onDelete = { viewModel.requestDeleteCar(car) },
                         )
                     }
@@ -932,104 +819,6 @@ fun AddCarManagementSection(
         )
     }
 
-    uiState.activeItemConfigEditor?.let { editor ->
-        var drafts by remember(editor) { mutableStateOf(editor.drafts) }
-        var editingDraftId by remember { mutableStateOf<String?>(null) }
-        var addingCustomDraft by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = viewModel::closeItemConfigEditor,
-            title = { Text(text = "车型级项目配置") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = editor.carDisplayName,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    drafts.forEach { draft ->
-                        MaintenanceDraftSummaryCard(
-                            draft = draft,
-                            onClick = { editingDraftId = draft.id },
-                            onEnabledChange = { enabled ->
-                                drafts = drafts.map {
-                                    if (it.id == draft.id) it.copy(isEnabled = enabled) else it
-                                }
-                            },
-                            onDelete = if (!draft.isDefault) {
-                                {
-                                    drafts = drafts.filterNot { it.id == draft.id }
-                                }
-                            } else {
-                                null
-                            },
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = { addingCustomDraft = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(text = "新增自定义项目")
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.saveItemConfig(
-                            editor = editor,
-                            drafts = drafts,
-                        )
-                    },
-                ) {
-                    Text(text = "保存")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::closeItemConfigEditor) {
-                    Text(text = "取消")
-                }
-            },
-        )
-
-        val editingDraft = drafts.firstOrNull { it.id == editingDraftId }
-        if (editingDraft != null) {
-            ItemRuleEditDialog(
-                title = "保养项目设置",
-                draft = editingDraft,
-                onDismiss = { editingDraftId = null },
-                onSave = { updated ->
-                    drafts = drafts.map { if (it.id == updated.id) updated else it }
-                    editingDraftId = null
-                },
-            )
-        }
-
-        if (addingCustomDraft) {
-            ItemRuleEditDialog(
-                title = "新增自定义项目",
-                draft = ItemRuleDraft(
-                    id = UUID.randomUUID().toString(),
-                    name = "",
-                    isDefault = false,
-                    catalogKey = null,
-                    isEnabled = true,
-                    remindByMileage = true,
-                    mileageInterval = 5000,
-                    remindByTime = false,
-                    monthInterval = 12,
-                    warningStartPercent = 100,
-                    dangerStartPercent = 125,
-                ),
-                onDismiss = { addingCustomDraft = false },
-                onSave = { created ->
-                    drafts = drafts + created
-                    addingCustomDraft = false
-                },
-            )
-        }
-    }
 }
 
 @Composable
@@ -1056,72 +845,110 @@ private fun StatusMessage(text: String) {
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun CarRowCard(
     car: CarProfileSnapshot,
     isApplied: Boolean,
+    carAgeReferenceDate: LocalDate,
+    isActionsMenuOpen: Boolean,
+    onActionsMenuOpen: () -> Unit,
+    onActionsMenuDismiss: () -> Unit,
     onApply: () -> Unit,
     onEdit: () -> Unit,
-    onEditItemConfig: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    val containerColor = if (isApplied) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val borderColor = if (isApplied) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = onActionsMenuOpen,
+                ),
+            shape = RoundedCornerShape(16.dp),
+            color = containerColor,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, borderColor),
         ) {
-            Text(
-                text = "${car.brand} ${car.modelName}",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
-            )
-            Text(
-                text = "上路日期：${MyDataTransferTimeCodec.formatDate(car.purchaseDate)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "里程：${car.mileage} km",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (isApplied) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
-                    text = "当前应用车型",
+                    text = "${car.brand} ${car.modelName}",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                )
+                Text(
+                    text = "上路日期：${MyDataTransferTimeCodec.formatDate(car.purchaseDate)}  车龄：${carAgeText(car.purchaseDate, carAgeReferenceDate)}  里程：${formatMileageKm(car.mileage)}km",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Box(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.TopEnd)) {
+            DropdownMenu(
+                expanded = isActionsMenuOpen,
+                onDismissRequest = onActionsMenuDismiss,
+                modifier = Modifier.wrapContentSize(Alignment.TopEnd),
             ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "编辑",
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    },
+                    onClick = {
+                        onActionsMenuDismiss()
+                        onEdit()
+                    },
+                )
                 if (!isApplied) {
-                    OutlinedButton(
-                        onClick = onApply,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(text = "应用")
-                    }
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "应用",
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        },
+                        onClick = {
+                            onActionsMenuDismiss()
+                            onApply()
+                        },
+                    )
                 }
-                OutlinedButton(
-                    onClick = onEdit,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(text = "编辑")
-                }
-                OutlinedButton(
-                    onClick = onEditItemConfig,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(text = "项目配置")
-                }
-                Button(
-                    onClick = onDelete,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(text = "删除")
-                }
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "删除",
+                            maxLines = 1,
+                            softWrap = false,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = {
+                        onActionsMenuDismiss()
+                        onDelete()
+                    },
+                )
             }
         }
     }
@@ -1147,6 +974,7 @@ private fun CarEditorPage(
     var drafts by remember(editor) { mutableStateOf(editor.itemDrafts) }
     var editingDraftId by remember { mutableStateOf<String?>(null) }
     var addingCustomDraft by remember { mutableStateOf(false) }
+    var openDraftMenuKey by remember { mutableStateOf<String?>(null) }
     val modelOptions = remember(brand) { addCarModelOptions(brand) }
     val canSave = brand.trim().isNotEmpty() && modelName.trim().isNotEmpty()
 
@@ -1237,8 +1065,8 @@ private fun CarEditorPage(
                                 },
                             )
                         } else {
-                            LabelValueRow(label = "品牌", value = brand)
-                            LabelValueRow(label = "车型", value = modelName)
+                            LabelValueRow(label = "品牌", value = brand, enabled = false)
+                            LabelValueRow(label = "车型", value = modelName, enabled = false)
                         }
                         LabelValueRow(
                             label = "上路日期",
@@ -1263,11 +1091,23 @@ private fun CarEditorPage(
                         text = "保养项目设置",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                     )
+                    Text(
+                        text = "可按需关闭项目，也可点击项目进入设置里程/时间提醒规则",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         drafts.forEach { draft ->
                             MaintenanceDraftSummaryCard(
                                 draft = draft,
                                 onClick = { editingDraftId = draft.id },
+                                isMenuOpen = openDraftMenuKey == draft.id,
+                                onMenuOpen = { openDraftMenuKey = draft.id },
+                                onMenuDismiss = {
+                                    if (openDraftMenuKey == draft.id) {
+                                        openDraftMenuKey = null
+                                    }
+                                },
                                 onEnabledChange = { enabled ->
                                     drafts = drafts.map {
                                         if (it.id == draft.id) it.copy(isEnabled = enabled) else it
@@ -1275,7 +1115,13 @@ private fun CarEditorPage(
                                 },
                                 onDelete = if (!draft.isDefault) {
                                     {
+                                        if (openDraftMenuKey == draft.id) {
+                                            openDraftMenuKey = null
+                                        }
                                         drafts = drafts.filterNot { it.id == draft.id }
+                                        if (editingDraftId == draft.id) {
+                                            editingDraftId = null
+                                        }
                                     }
                                 } else {
                                     null
@@ -1320,44 +1166,73 @@ private fun CarEditorPage(
         )
     }
 
-    val editingDraft = drafts.firstOrNull { it.id == editingDraftId }
-    if (editingDraft != null) {
-        ItemRuleEditDialog(
-            title = "保养项目设置",
-            draft = editingDraft,
-            onDismiss = { editingDraftId = null },
-            onSave = { updated ->
-                drafts = drafts.map { if (it.id == updated.id) updated else it }
-                editingDraftId = null
-            },
+        val editingDraft = drafts.firstOrNull { it.id == editingDraftId }
+        if (editingDraft != null) {
+            ItemRuleEditDialog(
+                title = "保养项目设置",
+                draft = editingDraft,
+                canEditName = editingDraft.isDefault == false,
+                onRestoreDefaults = if (editingDraft.isDefault) {
+                    restoreItemDraftDefaults(
+                        brand = editor.brand,
+                        modelName = editor.modelName,
+                        draft = editingDraft,
+                    )?.let { restored ->
+                        { restored }
+                    }
+                } else {
+                    null
+                },
+                validateResult = { candidate ->
+                    val normalizedName = candidate.name.trim()
+                    if (drafts.any { it.id != candidate.id && it.name.trim() == normalizedName }) {
+                        "项目名称已存在，请更换后再保存。"
+                    } else {
+                        null
+                    }
+                },
+                onDismiss = { editingDraftId = null },
+                onSave = { updated ->
+                    drafts = drafts.map { if (it.id == updated.id) updated else it }
+                    editingDraftId = null
+                },
         )
     }
 
-    if (addingCustomDraft) {
-        ItemRuleEditDialog(
-            title = "新增自定义项目",
-            draft = ItemRuleDraft(
-                id = UUID.randomUUID().toString(),
-                name = "",
-                isDefault = false,
-                catalogKey = null,
-                isEnabled = true,
-                remindByMileage = true,
-                mileageInterval = 5000,
-                remindByTime = false,
-                monthInterval = 12,
-                warningStartPercent = 100,
-                dangerStartPercent = 125,
-            ),
-            onDismiss = { addingCustomDraft = false },
-            onSave = { created ->
-                drafts = drafts + created
-                addingCustomDraft = false
-            },
-        )
+        if (addingCustomDraft) {
+            ItemRuleEditDialog(
+                title = "新增自定义项目",
+                draft = ItemRuleDraft(
+                    id = UUID.randomUUID().toString(),
+                    name = "",
+                    isDefault = false,
+                    catalogKey = null,
+                    isEnabled = true,
+                    remindByMileage = true,
+                    mileageInterval = 5000,
+                    remindByTime = false,
+                    monthInterval = 12,
+                    warningStartPercent = 100,
+                    dangerStartPercent = 125,
+                ),
+                canEditName = true,
+                onRestoreDefaults = null,
+                validateResult = { candidate ->
+                    val normalizedName = candidate.name.trim()
+                    if (drafts.any { it.id != candidate.id && it.name.trim() == normalizedName }) {
+                        "项目名称已存在，请更换后再保存。"
+                    } else {
+                        null
+                    }
+                },
+                onDismiss = { addingCustomDraft = false },
+                onSave = { created ->
+                    drafts = drafts + created
+                    addingCustomDraft = false
+                },
+            )
+        }
     }
-}
-
 @Composable
 private fun SingleChoiceDropdownField(
     label: String,
@@ -1438,8 +1313,14 @@ private fun SingleChoiceDropdownField(
 private fun LabelValueRow(
     label: String,
     value: String,
+    enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
 ) {
+    val valueColor = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
     ListItem(
         modifier = Modifier
             .fillMaxWidth()
@@ -1462,7 +1343,7 @@ private fun LabelValueRow(
                     Text(
                         text = value,
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = valueColor,
                     )
                     Text(
                         text = "⌄",
@@ -1474,7 +1355,7 @@ private fun LabelValueRow(
                 Text(
                     text = value,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = valueColor,
                 )
             }
         },
@@ -1486,13 +1367,68 @@ private fun LabelValueRow(
 private fun MaintenanceDraftSummaryCard(
     draft: ItemRuleDraft,
     onClick: () -> Unit,
+    isMenuOpen: Boolean,
+    onMenuOpen: () -> Unit,
+    onMenuDismiss: () -> Unit,
     onEnabledChange: (Boolean) -> Unit,
     onDelete: (() -> Unit)?,
+) {
+    if (onDelete == null) {
+        MaintenanceDraftSummaryCardContent(
+            draft = draft,
+            onClick = onClick,
+            onEnabledChange = onEnabledChange,
+        )
+        return
+    }
+
+    Box(modifier = Modifier.fillMaxWidth().wrapContentSize(Alignment.TopEnd)) {
+        MaintenanceDraftSummaryCardContent(
+            draft = draft,
+            onClick = onClick,
+            onLongClick = onMenuOpen,
+            onEnabledChange = onEnabledChange,
+        )
+
+        Box(modifier = Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(
+                expanded = isMenuOpen,
+                onDismissRequest = onMenuDismiss,
+            ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "删除",
+                            maxLines = 1,
+                            softWrap = false,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = {
+                        onMenuDismiss()
+                        onDelete()
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalFoundationApi::class)
+private fun MaintenanceDraftSummaryCardContent(
+    draft: ItemRuleDraft,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    onEnabledChange: (Boolean) -> Unit,
 ) {
     OutlinedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -1540,16 +1476,6 @@ private fun MaintenanceDraftSummaryCard(
                     onCheckedChange = onEnabledChange,
                 )
             }
-            if (onDelete != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    OutlinedButton(onClick = onDelete) {
-                        Text(text = "删除")
-                    }
-                }
-            }
         }
     }
 }
@@ -1571,61 +1497,59 @@ private fun DefaultBadge() {
 
 private fun reminderDistanceText(value: Int): String {
     val safeValue = value.coerceAtLeast(0)
-    if (safeValue >= 10_000) {
-        val wan = safeValue / 10_000
-        val remainder = safeValue % 10_000
-        val qian = remainder / 1_000
-        val bai = (remainder % 1_000) / 100
-
-        if (wan > 0) {
-            if (qian > 0 || bai > 0) {
-                val decimalValue = (qian * 1_000 + bai * 100) / 10_000.0
-                val fullString = String.format("%.1f", decimalValue)
-                val parts = fullString.split(".")
-                val decimalPart = if (parts.size > 1) {
-                    parts[1].replace(Regex("^0+|0+$"), "")
-                } else {
-                    ""
-                }
-                if (decimalPart.isEmpty()) {
-                    return "${wan}万公里"
-                }
-                return "${wan}.${decimalPart}万公里"
-            }
-            return "${wan}万公里"
-        }
-    }
-    return "${safeValue}公里"
+    val wanValue = safeValue / 10_000.0
+    return "${String.format(Locale.ROOT, "%.1f", wanValue)}万公里"
 }
 
 private fun mileageDisplayText(wan: Int, qian: Int, bai: Int): String {
     val normalizedWan = wan.coerceAtLeast(0)
     val normalizedQian = qian.coerceIn(0, 9)
     val normalizedBai = bai.coerceIn(0, 9)
-    if (normalizedWan == 0 && normalizedQian == 0 && normalizedBai == 0) {
-        return "0"
-    }
-    return buildString {
-        if (normalizedWan > 0) append("${normalizedWan}万")
-        if (normalizedQian > 0 || (normalizedWan > 0 && normalizedBai > 0)) append("${normalizedQian}千")
-        if (normalizedBai > 0 || isEmpty()) append("${normalizedBai}百")
-    }
+    return "${normalizedWan}万${normalizedQian}千${normalizedBai}百"
+}
+
+private fun formatMileageKm(mileage: Int): String {
+    val formatter = NumberFormat.getIntegerInstance(Locale.US)
+    formatter.isGroupingUsed = true
+    return formatter.format(mileage.coerceAtLeast(0))
+}
+
+private fun carAgeText(purchaseDate: LocalDate, now: LocalDate): String {
+    val ageDays = ChronoUnit.DAYS.between(purchaseDate, now).coerceAtLeast(0)
+    val years = ageDays / 365.25
+    return String.format(Locale.ROOT, "%.1f年", years)
 }
 
 @Composable
 private fun ItemRuleEditDialog(
     title: String,
     draft: ItemRuleDraft,
+    canEditName: Boolean,
+    onRestoreDefaults: (() -> ItemRuleDraft)? = null,
+    validateResult: ((ItemRuleDraft) -> String?)? = null,
     onDismiss: () -> Unit,
     onSave: (ItemRuleDraft) -> Unit,
 ) {
     var name by remember(draft.id) { mutableStateOf(draft.name) }
     var remindByMileage by remember(draft.id) { mutableStateOf(draft.remindByMileage) }
-    var mileageInterval by remember(draft.id) { mutableStateOf(draft.mileageInterval.coerceAtLeast(1000)) }
+    var mileageInterval by remember(draft.id) { mutableStateOf(draft.mileageInterval.coerceAtLeast(5000)) }
     var remindByTime by remember(draft.id) { mutableStateOf(draft.remindByTime) }
-    var monthInterval by remember(draft.id) { mutableStateOf(draft.monthInterval.coerceAtLeast(1)) }
-    var warningStartPercent by remember(draft.id) { mutableStateOf(draft.warningStartPercent.coerceAtLeast(0)) }
-    var dangerStartPercent by remember(draft.id) { mutableStateOf(draft.dangerStartPercent.coerceAtLeast(warningStartPercent)) }
+    var yearInterval by remember(draft.id) {
+        mutableStateOf((draft.monthInterval.coerceAtLeast(1) / 12.0).coerceAtLeast(0.5))
+    }
+    var validationMessage by remember(draft.id) { mutableStateOf<String?>(null) }
+    val restoredDefaults = onRestoreDefaults?.invoke()
+    val currentDraft = draft.copy(
+        remindByMileage = remindByMileage,
+        mileageInterval = if (remindByMileage) mileageInterval.coerceIn(5000, 500_000) else 0,
+        remindByTime = remindByTime,
+        monthInterval = if (remindByTime) (yearInterval * 12).roundToInt().coerceAtLeast(1) else 0,
+    )
+    val canRestoreDefaultsNow = restoredDefaults != null &&
+        canRestoreItemDraftDefaults(
+            draft = currentDraft,
+            restored = restoredDefaults,
+        )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1633,99 +1557,149 @@ private fun ItemRuleEditDialog(
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("项目名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(text = "按里程提醒")
-                    Switch(
-                        checked = remindByMileage,
-                        onCheckedChange = { remindByMileage = it },
-                    )
-                }
-                if (remindByMileage) {
-                    NumberAdjustRow(
-                        label = "里程间隔（km）",
-                        value = mileageInterval,
-                        step = 1000,
-                        minValue = 1000,
-                        maxValue = 100_000,
-                        onValueChange = { mileageInterval = it },
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(text = "按时间提醒")
-                    Switch(
-                        checked = remindByTime,
-                        onCheckedChange = { remindByTime = it },
-                    )
-                }
-                if (remindByTime) {
-                    NumberAdjustRow(
-                        label = "时间间隔（月）",
-                        value = monthInterval,
-                        step = 1,
-                        minValue = 1,
-                        maxValue = 120,
-                        onValueChange = { monthInterval = it },
-                    )
-                }
-
-                NumberAdjustRow(
-                    label = "黄色阈值（%）",
-                    value = warningStartPercent,
-                    step = 5,
-                    minValue = 50,
-                    maxValue = 200,
-                    onValueChange = {
-                        warningStartPercent = it
-                        if (dangerStartPercent < it) {
-                            dangerStartPercent = it
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "项目名称",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                        )
+                        if (canEditName) {
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it },
+                                label = { Text("请输入项目名称") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            Text(
+                                text = name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                    },
-                )
-                NumberAdjustRow(
-                    label = "红色阈值（%）",
-                    value = dangerStartPercent,
-                    step = 5,
-                    minValue = warningStartPercent,
-                    maxValue = 250,
-                    onValueChange = { dangerStartPercent = it.coerceAtLeast(warningStartPercent) },
-                )
+                    }
+
+                    HorizontalDivider()
+
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "提醒方式",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "按里程提醒",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Switch(
+                                checked = remindByMileage,
+                                onCheckedChange = { remindByMileage = it },
+                            )
+                        }
+                        if (remindByMileage) {
+                            NumberAdjustRow(
+                                label = "里程间隔",
+                                value = mileageInterval,
+                                step = 5000,
+                                minValue = 5000,
+                                maxValue = 500_000,
+                                valueText = ::reminderDistanceText,
+                                onValueChange = { mileageInterval = it },
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "按时间提醒",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Switch(
+                                checked = remindByTime,
+                                onCheckedChange = { remindByTime = it },
+                            )
+                        }
+                                if (remindByTime) {
+                                    YearAdjustRow(
+                                        label = "时间间隔",
+                                        value = yearInterval,
+                                        step = 0.5,
+                                        minValue = 0.5,
+                                        maxValue = 10.0,
+                                        onValueChange = { yearInterval = it },
+                            )
+                        }
+                    }
+
+                    if (onRestoreDefaults != null) {
+                        HorizontalDivider()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    restoredDefaults?.let { restored ->
+                                        name = restored.name
+                                        remindByMileage = restored.remindByMileage
+                                        mileageInterval = restored.mileageInterval.coerceAtMost(500_000).coerceAtLeast(5000)
+                                        remindByTime = restored.remindByTime
+                                        yearInterval = (restored.monthInterval.coerceAtLeast(1) / 12.0).coerceAtLeast(0.5)
+                                    }
+                                },
+                                enabled = canRestoreDefaultsNow,
+                            ) {
+                                Text(text = "恢复默认值")
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (name.trim().isEmpty()) return@TextButton
-                    if (!remindByMileage && !remindByTime) return@TextButton
+                    val normalizedName = name.trim()
+                    if (normalizedName.isEmpty()) {
+                        validationMessage = "项目名称不能为空。"
+                        return@TextButton
+                    }
+                    if (!remindByMileage && !remindByTime) {
+                        validationMessage = "请至少开启一种提醒方式。"
+                        return@TextButton
+                    }
+                    val candidate = draft.copy(
+                        name = normalizedName,
+                        remindByMileage = remindByMileage,
+                        mileageInterval = if (remindByMileage) mileageInterval.coerceIn(5000, 500_000) else 0,
+                        remindByTime = remindByTime,
+                        monthInterval = if (remindByTime) (yearInterval * 12).roundToInt().coerceAtLeast(1) else 0,
+                        warningStartPercent = MaintenanceItemConfig.warningRangeStartPercent,
+                        dangerStartPercent = MaintenanceItemConfig.dangerStartPercent,
+                    )
+                    val duplicateMessage = validateResult?.invoke(candidate)
+                    if (duplicateMessage != null) {
+                        validationMessage = duplicateMessage
+                        return@TextButton
+                    }
                     onSave(
-                        draft.copy(
-                            name = name.trim(),
-                            remindByMileage = remindByMileage,
-                            mileageInterval = if (remindByMileage) mileageInterval.coerceAtLeast(1) else 0,
-                            remindByTime = remindByTime,
-                            monthInterval = if (remindByTime) monthInterval.coerceAtLeast(1) else 0,
-                            warningStartPercent = warningStartPercent.coerceAtLeast(0),
-                            dangerStartPercent = dangerStartPercent.coerceAtLeast(warningStartPercent),
-                        ),
+                        candidate,
                     )
                 },
             ) {
-                Text(text = "保存")
+                Text(text = "完成")
             }
         },
         dismissButton = {
@@ -1734,6 +1708,19 @@ private fun ItemRuleEditDialog(
             }
         },
     )
+
+    if (validationMessage != null) {
+        AlertDialog(
+            onDismissRequest = { validationMessage = null },
+            title = { Text(text = "提示") },
+            text = { Text(text = validationMessage.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = { validationMessage = null }) {
+                    Text(text = "我知道了")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -1743,26 +1730,117 @@ private fun NumberAdjustRow(
     step: Int,
     minValue: Int,
     maxValue: Int,
+    valueText: (Int) -> String = { it.toString() },
     onValueChange: (Int) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "$label：$value")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { onValueChange((value - step).coerceAtLeast(minValue)) }) {
+        Text(text = "$label：${valueText(value)}")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(
+                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
                 Text(text = "-")
             }
-            OutlinedButton(onClick = { onValueChange((value + step).coerceAtMost(maxValue)) }) {
+            OutlinedButton(
+                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
                 Text(text = "+")
             }
         }
     }
 }
 
+@Composable
+private fun YearAdjustRow(
+    label: String,
+    value: Double,
+    step: Double,
+    minValue: Double,
+    maxValue: Double,
+    onValueChange: (Double) -> Unit,
+) {
+    val displayText = yearIntervalText(value)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = "$label：$displayText")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(
+                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text(text = "-")
+            }
+            OutlinedButton(
+                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text(text = "+")
+            }
+        }
+    }
+}
+
+private fun yearIntervalText(value: Double): String {
+    val normalized = value.coerceAtLeast(0.5)
+    return if (normalized % 1.0 == 0.0) {
+        "${normalized.toInt()}年"
+    } else {
+        String.format("%.1f年", normalized)
+    }
+}
+
+private fun restoreItemDraftDefaults(
+    brand: String,
+    modelName: String,
+    draft: ItemRuleDraft,
+): ItemRuleDraft? {
+    val definition = MaintenanceItemConfig
+        .defaultItemDefinitions(brand, modelName)
+        .firstOrNull { it.key == draft.catalogKey }
+        ?: return null
+
+    return draft.copy(
+        name = definition.defaultName,
+        remindByMileage = definition.remindByMileage,
+        mileageInterval = (definition.mileageInterval ?: 5000).coerceAtLeast(5000),
+        remindByTime = definition.remindByTime,
+        monthInterval = (definition.monthInterval ?: 12).coerceAtLeast(1),
+        warningStartPercent = definition.warningStartPercent,
+        dangerStartPercent = definition.dangerStartPercent,
+    )
+}
+
+private fun canRestoreItemDraftDefaults(
+    draft: ItemRuleDraft,
+    restored: ItemRuleDraft,
+): Boolean {
+    return normalizedItemDraftRestoreComparable(draft) != normalizedItemDraftRestoreComparable(restored)
+}
+
+private fun normalizedItemDraftRestoreComparable(draft: ItemRuleDraft): List<Any> {
+    return listOf(
+        draft.remindByMileage,
+        if (draft.remindByMileage) draft.mileageInterval.coerceAtLeast(5000) else 0,
+        draft.remindByTime,
+        if (draft.remindByTime) draft.monthInterval.coerceAtLeast(1) else 0,
+    )
+}
+
 internal fun epochMillisToLocalDate(epochMillis: Long): LocalDate {
     return java.time.Instant.ofEpochMilli(epochMillis)
-        .atZone(ZoneId.systemDefault())
+        .atZone(java.time.ZoneOffset.UTC)
         .toLocalDate()
 }
