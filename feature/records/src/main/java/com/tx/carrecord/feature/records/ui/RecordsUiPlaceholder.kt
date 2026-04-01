@@ -8,9 +8,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +41,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
@@ -204,6 +208,7 @@ class RecordsViewModel @Inject constructor(
 
     init {
         observeAppliedCarChanges()
+        observeDateContext()
         observeMaintenanceDataChanges()
     }
 
@@ -279,6 +284,14 @@ class RecordsViewModel @Inject constructor(
     private fun observeMaintenanceDataChanges() {
         viewModelScope.launch {
             maintenanceDataChangeContext.changesFlow.collect { refresh() }
+        }
+    }
+
+    private fun observeDateContext() {
+        viewModelScope.launch {
+            appDateContext.nowFlow()
+                .distinctUntilChanged()
+                .collect { refresh() }
         }
     }
 
@@ -404,6 +417,14 @@ class RecordsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(selectedItemIds = nextSelected)
     }
 
+    fun setSelectedItems(optionIds: Set<String>) {
+        if (_uiState.value.editingLockedItemId != null) return
+        val availableIds = _uiState.value.availableItemOptions.map { it.id }.toSet()
+        _uiState.value = _uiState.value.copy(
+            selectedItemIds = optionIds.filterTo(linkedSetOf()) { it in availableIds },
+        )
+    }
+
     fun updateCostText(raw: String) {
         _uiState.value = _uiState.value.copy(costText = sanitizeCostInput(raw))
     }
@@ -507,7 +528,7 @@ class RecordsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             intervalConfirmDrafts = _uiState.value.intervalConfirmDrafts.map { draft ->
                 if (draft.id == itemId) {
-                    draft.copy(mileageInterval = mileageInterval.coerceIn(1_000, 100_000))
+                    draft.copy(mileageInterval = mileageInterval)
                 } else {
                     draft
                 }
@@ -519,7 +540,7 @@ class RecordsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             intervalConfirmDrafts = _uiState.value.intervalConfirmDrafts.map { draft ->
                 if (draft.id == itemId) {
-                    draft.copy(yearInterval = yearInterval.coerceIn(0.5, 10.0))
+                    draft.copy(yearInterval = yearInterval)
                 } else {
                     draft
                 }
@@ -658,7 +679,7 @@ class RecordsViewModel @Inject constructor(
                                 remindByMileage = draft.remindByMileage,
                                 mileageInterval = draft.mileageInterval,
                                 remindByTime = draft.remindByTime,
-                                monthInterval = (draft.yearInterval * 12).roundToInt().coerceAtLeast(1),
+                                monthInterval = (draft.yearInterval * 12).roundToInt(),
                             )
                         },
                     ),
@@ -714,9 +735,9 @@ class RecordsViewModel @Inject constructor(
                     id = option.id,
                     name = option.name,
                     remindByMileage = option.remindByMileage,
-                    mileageInterval = option.mileageInterval.coerceAtLeast(1_000),
+                    mileageInterval = option.mileageInterval,
                     remindByTime = option.remindByTime,
-                    yearInterval = (option.monthInterval.coerceAtLeast(1) / 12.0).coerceAtLeast(0.5),
+                    yearInterval = option.monthInterval / 12.0,
                 )
             }
         _uiState.value = _uiState.value.copy(
@@ -1145,13 +1166,14 @@ fun AddRecordPage(
     onIntervalConfirmYearChange: (String, Double) -> Unit,
     onDateClick: (LocalDate) -> Unit,
     onMileageClick: (Int, Int, Int) -> Unit,
-    onItemToggle: (String) -> Unit,
+    onItemSelectionConfirm: (Set<String>) -> Unit,
     onCostChange: (String) -> Unit,
     onNoteChange: (String) -> Unit,
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
     var showMileagePicker by remember { mutableStateOf(false) }
     var showItemPicker by remember { mutableStateOf(false) }
+    var itemPickerSelectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     val selectedCar = uiState.availableCars.firstOrNull { it.id == uiState.selectedCarId }
@@ -1266,7 +1288,10 @@ fun AddRecordPage(
                                 label = "选择项目",
                                 value = selectedItemsText,
                                 onClick = if (uiState.editingLockedItemId == null) {
-                                    { showItemPicker = true }
+                                    {
+                                        itemPickerSelectedIds = uiState.selectedItemIds
+                                        showItemPicker = true
+                                    }
                                 } else {
                                     null
                                 },
@@ -1432,18 +1457,26 @@ fun AddRecordPage(
                         .heightIn(max = 420.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    uiState.availableItemOptions.forEach { option ->
+                    uiState.availableItemOptions.forEachIndexed { index, option ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clickable { onItemToggle(option.id) },
+                                .clickable {
+                                    itemPickerSelectedIds = itemPickerSelectedIds.toMutableSet().apply {
+                                        if (!add(option.id)) {
+                                            remove(option.id)
+                                        }
+                                    }
+                                }
+                                .padding(horizontal = 4.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
-                                checked = option.id in uiState.selectedItemIds,
+                                checked = option.id in itemPickerSelectedIds,
                                 onCheckedChange = {
-                                    onItemToggle(option.id)
+                                    itemPickerSelectedIds = itemPickerSelectedIds.toMutableSet().apply {
+                                        if (it == true) add(option.id) else remove(option.id)
+                                    }
                                 },
                             )
                             Text(
@@ -1451,12 +1484,25 @@ fun AddRecordPage(
                                 modifier = Modifier.padding(start = 4.dp),
                             )
                         }
+                        if (index != uiState.availableItemOptions.lastIndex) {
+                            HorizontalDivider()
+                        }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showItemPicker = false }) {
+                TextButton(
+                    onClick = {
+                        onItemSelectionConfirm(itemPickerSelectedIds)
+                        showItemPicker = false
+                    },
+                ) {
                     Text(text = "完成")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showItemPicker = false }) {
+                    Text(text = "取消")
                 }
             },
         )
@@ -1507,32 +1553,43 @@ fun AddRecordPage(
                             text = "保养项目",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                         )
-                        uiState.intervalConfirmDrafts.forEach { draft ->
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = draft.name,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                )
-                                if (draft.remindByMileage) {
-                                    NumberAdjustRow(
-                                        label = "里程间隔",
-                                        value = draft.mileageInterval,
-                                        step = 500,
-                                        minValue = 1_000,
-                                        maxValue = 100_000,
-                                        valueText = ::formatReminderMileageText,
-                                        onValueChange = { onIntervalConfirmMileageChange(draft.id, it) },
-                                    )
-                                }
-                                if (draft.remindByTime) {
-                                    YearAdjustRow(
-                                        label = "时间间隔",
-                                        value = draft.yearInterval,
-                                        step = 0.5,
-                                        minValue = 0.5,
-                                        maxValue = 10.0,
-                                        onValueChange = { onIntervalConfirmYearChange(draft.id, it) },
-                                    )
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        ) {
+                            Column {
+                                uiState.intervalConfirmDrafts.forEachIndexed { index, draft ->
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Text(
+                                            text = draft.name,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                        )
+                                        if (draft.remindByMileage) {
+                                            NumberAdjustRow(
+                                                label = "里程间隔",
+                                                value = draft.mileageInterval,
+                                                minValue = 1_000,
+                                                maxValue = 500_000,
+                                                valueText = ::formatReminderMileageText,
+                                                onValueChange = { onIntervalConfirmMileageChange(draft.id, it) },
+                                            )
+                                        }
+                                        if (draft.remindByTime) {
+                                            YearAdjustRow(
+                                                label = "时间间隔",
+                                                value = draft.yearInterval,
+                                                minValue = 0.5,
+                                                maxValue = 20.0,
+                                                onValueChange = { onIntervalConfirmYearChange(draft.id, it) },
+                                            )
+                                        }
+                                    }
+                                    if (index != uiState.intervalConfirmDrafts.lastIndex) {
+                                        HorizontalDivider()
+                                    }
                                 }
                             }
                         }
@@ -1612,34 +1669,27 @@ private fun PickerFieldRow(
 private fun NumberAdjustRow(
     label: String,
     value: Int,
-    step: Int,
     minValue: Int,
     maxValue: Int,
     valueText: (Int) -> String = { it.toString() },
     onValueChange: (Int) -> Unit,
 ) {
+    val step = mileageAdjustStep(value)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "$label：${valueText(value)}")
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilledTonalButton(
-                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
-            ) {
-                Text(text = "-")
-            }
-            FilledTonalButton(
-                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
-            ) {
-                Text(text = "+")
-            }
-        }
+        Text(
+            text = "$label：${valueText(value)}",
+            modifier = Modifier.widthIn(max = 180.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        AdjustButtonGroup(
+            onDecrease = { onValueChange((value - step).coerceAtLeast(minValue)) },
+            onIncrease = { onValueChange((value + step).coerceAtMost(maxValue)) },
+        )
     }
 }
 
@@ -1647,32 +1697,74 @@ private fun NumberAdjustRow(
 private fun YearAdjustRow(
     label: String,
     value: Double,
-    step: Double,
     minValue: Double,
     maxValue: Double,
     onValueChange: (Double) -> Unit,
 ) {
+    val step = yearAdjustStep(value)
     val displayText = yearIntervalText(value)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "$label：$displayText")
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilledTonalButton(
-                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
+        Text(
+            text = "$label：$displayText",
+            modifier = Modifier.widthIn(max = 180.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        AdjustButtonGroup(
+            onDecrease = { onValueChange((value - step).coerceAtLeast(minValue)) },
+            onIncrease = { onValueChange((value + step).coerceAtMost(maxValue)) },
+        )
+    }
+}
+
+private fun mileageAdjustStep(value: Int): Int {
+    return if (value <= 10_000) 1_000 else 5_000
+}
+
+private fun yearAdjustStep(value: Double): Double {
+    return if (value <= 5.0) 0.5 else 1.0
+}
+
+@Composable
+private fun AdjustButtonGroup(
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = onDecrease,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier
+                    .width(38.dp)
+                    .defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                    .height(28.dp),
             ) {
-                Text(text = "-")
+                Text(text = "-", style = MaterialTheme.typography.titleMedium)
             }
-            FilledTonalButton(
-                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
+            Box(
+                modifier = Modifier
+                    .height(12.dp)
+                    .width(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
+            TextButton(
+                onClick = onIncrease,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier
+                    .width(38.dp)
+                    .defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                    .height(28.dp),
             ) {
-                Text(text = "+")
+                Text(text = "+", style = MaterialTheme.typography.titleMedium)
             }
         }
     }

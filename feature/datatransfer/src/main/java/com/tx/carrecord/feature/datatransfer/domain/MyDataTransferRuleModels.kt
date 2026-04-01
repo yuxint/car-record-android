@@ -1,6 +1,15 @@
 package com.tx.carrecord.feature.datatransfer.domain
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonPrimitive
+import java.math.BigDecimal
 import java.time.LocalDate
 
 @Serializable
@@ -28,6 +37,7 @@ data class MyDataTransferItemPayload(
     val monthInterval: Int,
     val warningStartPercent: Int,
     val dangerStartPercent: Int,
+    @Serializable(with = PlainNumberDoubleSerializer::class)
     val createdAt: Double,
 )
 
@@ -52,6 +62,7 @@ data class MyDataTransferLogPayload(
     val id: String,
     val date: String,
     val itemNames: List<String>,
+    @Serializable(with = PlainNumberDoubleSerializer::class)
     val cost: Double,
     val mileage: Int,
     val note: String,
@@ -72,7 +83,7 @@ data class BackupExportCarSnapshot(
 data class BackupExportItemOptionSnapshot(
     val id: String,
     val name: String,
-    val ownerCarId: String?,
+    val ownerCarID: String?,
     val isDefault: Boolean,
     val catalogKey: String?,
     val remindByMileage: Boolean,
@@ -86,7 +97,7 @@ data class BackupExportItemOptionSnapshot(
 
 data class BackupExportRecordSnapshot(
     val id: String,
-    val carId: String,
+    val carID: String,
     val date: LocalDate,
     val itemIDsRaw: String,
     val cost: Double,
@@ -118,6 +129,23 @@ data class BackupImportRecordDraft(
     val mappedItemIds: List<String>,
     val mappedItemIDsRaw: String,
 )
+
+object PlainNumberDoubleSerializer : KSerializer<Double> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("PlainNumberDouble", PrimitiveKind.DOUBLE)
+
+    override fun serialize(encoder: Encoder, value: Double) {
+        val jsonEncoder = encoder as? JsonEncoder
+        if (jsonEncoder != null) {
+            val plainText = BigDecimal.valueOf(value).toPlainString()
+            jsonEncoder.encodeJsonElement(JsonPrimitive(BigDecimal(plainText)))
+            return
+        }
+        encoder.encodeDouble(value)
+    }
+
+    override fun deserialize(decoder: Decoder): Double = decoder.decodeDouble()
+}
 
 sealed interface BackupImportDecision {
     data class Success(val plan: BackupImportPlan) : BackupImportDecision

@@ -1,6 +1,7 @@
 package com.tx.carrecord.feature.my.ui
 
 import android.content.Context
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -15,9 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,7 +30,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.datastore.AppDateContext
+import com.tx.carrecord.core.datastore.DebugModeContext
 import com.tx.carrecord.core.common.ui.AppDatePickerDialog
+import com.tx.carrecord.core.datastore.logging.AppLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import javax.inject.Inject
@@ -46,15 +47,20 @@ data class MyUiState(
     val manualNowDateText: String = "",
     val manualNowDate: LocalDate = LocalDate.of(1970, 1, 1),
     val currentDate: LocalDate = LocalDate.of(1970, 1, 1),
+    val isDebugModeEnabled: Boolean = false,
+    val debugModeStatusMessage: String? = null,
     val message: String? = null,
 )
 
 @HiltViewModel
 class MyViewModel @Inject constructor(
     private val appDateContext: AppDateContext,
+    private val debugModeContext: DebugModeContext,
+    private val appLogger: AppLogger,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(MyUiState())
     val uiState: StateFlow<MyUiState> = _uiState.asStateFlow()
+    private var debugTapState = DebugTapState()
 
     init {
         viewModelScope.launch {
@@ -69,7 +75,12 @@ class MyViewModel @Inject constructor(
                 manualNowDateText = appDateContext.formatShortDate(manualDate),
             )
         }
+        viewModelScope.launch {
+            val debugModeEnabled = debugModeContext.isDebugModeEnabledFlow.first()
+            _uiState.value = _uiState.value.copy(isDebugModeEnabled = debugModeEnabled)
+        }
         observeDateContext()
+        observeDebugModeContext()
     }
 
     private fun observeDateContext() {
@@ -93,18 +104,65 @@ class MyViewModel @Inject constructor(
         }
     }
 
+    private fun observeDebugModeContext() {
+        viewModelScope.launch {
+            debugModeContext.isDebugModeEnabledFlow.collect { enabled ->
+                _uiState.value = _uiState.value.copy(isDebugModeEnabled = enabled)
+            }
+        }
+    }
+
     fun setManualNowEnabled(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(isManualNowEnabled = enabled)
         viewModelScope.launch {
             appDateContext.setManualNowEnabled(enabled)
+            appLogger.info(
+                if (enabled) "自定义当前日期已开启" else "自定义当前日期已关闭",
+                payload = "enabled=$enabled",
+            )
         }
     }
 
     fun setManualNowDate(date: LocalDate) {
         viewModelScope.launch {
             appDateContext.setManualNowDate(date)
+            val dateText = appDateContext.formatShortDate(date)
+            appLogger.info("手动日期已更新", payload = dateText)
             _uiState.value = _uiState.value.copy(
-                message = "手动日期已更新为 ${appDateContext.formatShortDate(date)}",
+                message = "手动日期已更新为 $dateText",
+            )
+        }
+    }
+
+    fun handleVersionTap(nowMillis: Long = System.currentTimeMillis()) {
+        val lastTapAtMillis = debugTapState.lastTapAtMillis
+        if (lastTapAtMillis != null && nowMillis - lastTapAtMillis > DEBUG_TAP_WINDOW_MILLIS) {
+            debugTapState = DebugTapState()
+        }
+        debugTapState = debugTapState.copy(
+            tapCount = debugTapState.tapCount + 1,
+            lastTapAtMillis = nowMillis,
+        )
+
+        if (debugTapState.tapCount < DEBUG_TAP_THRESHOLD) {
+            return
+        }
+
+        debugTapState = DebugTapState()
+        val nextEnabled = !_uiState.value.isDebugModeEnabled
+        _uiState.value = _uiState.value.copy(
+            isDebugModeEnabled = nextEnabled,
+            debugModeStatusMessage = if (nextEnabled) {
+                "调试模式已开启，现在可以使用“调试工具”中的时间临时设置和控制台日志。"
+            } else {
+                "调试模式已关闭。"
+            },
+        )
+        viewModelScope.launch {
+            debugModeContext.setDebugModeEnabled(nextEnabled)
+            appLogger.info(
+                if (nextEnabled) "调试模式已开启" else "调试模式已关闭",
+                payload = "enabled=$nextEnabled",
             )
         }
     }
@@ -119,6 +177,7 @@ fun MyScreen(
     modifier: Modifier = Modifier,
     viewModel: MyViewModel = hiltViewModel(),
     extraContent: @Composable ColumnScope.(MyUiState) -> Unit = {},
+    onOpenLogConsole: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -131,6 +190,8 @@ fun MyScreen(
         extraContent = extraContent,
         onSetManualNowEnabled = viewModel::setManualNowEnabled,
         onShowManualDateEditor = { showManualDateEditor = true },
+        onShowLogConsolePage = onOpenLogConsole,
+        onVersionTap = viewModel::handleVersionTap,
     )
 
     if (showManualDateEditor) {
@@ -155,6 +216,8 @@ private fun MyHomeContent(
     extraContent: @Composable ColumnScope.(MyUiState) -> Unit,
     onSetManualNowEnabled: (Boolean) -> Unit,
     onShowManualDateEditor: () -> Unit,
+    onShowLogConsolePage: () -> Unit,
+    onVersionTap: () -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -166,39 +229,47 @@ private fun MyHomeContent(
 
         extraContent(uiState)
 
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "调试工具",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+        if (uiState.isDebugModeEnabled) {
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "自定义当前日期",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "调试工具",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                     )
-                    Switch(
-                        checked = uiState.isManualNowEnabled,
-                        onCheckedChange = onSetManualNowEnabled,
-                    )
-                }
-                if (uiState.isManualNowEnabled) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = "自定义当前日期",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Switch(
+                            checked = uiState.isManualNowEnabled,
+                            onCheckedChange = onSetManualNowEnabled,
+                        )
+                    }
+                    if (uiState.isManualNowEnabled) {
+                        OutlinedButton(
+                            onClick = onShowManualDateEditor,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(text = "手动日期：${uiState.manualNowDateText}")
+                        }
+                    }
                     OutlinedButton(
-                        onClick = onShowManualDateEditor,
+                        onClick = onShowLogConsolePage,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(text = "手动日期：${uiState.manualNowDateText}")
+                        Text(text = "控制台日志")
                     }
-                }
-                StatusMessage(text = "仅影响本地“当前日期”计算，不会修改历史记录日期。")
-                uiState.message?.let {
-                    StatusMessage(text = it)
+                    StatusMessage(text = "仅影响本地“当前日期”计算，不会修改历史记录日期。")
+                    uiState.message?.let {
+                        StatusMessage(text = it)
+                    }
                 }
             }
         }
@@ -212,11 +283,22 @@ private fun MyHomeContent(
                     text = "关于",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 )
-                Text(
-                    text = "版本号：$versionName",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onVersionTap),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "版本号",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = versionName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -237,3 +319,11 @@ private fun appVersionName(context: Context): String {
         info.versionName?.trim().orEmpty().ifEmpty { "未知版本" }
     }.getOrDefault("未知版本")
 }
+
+private data class DebugTapState(
+    val tapCount: Int = 0,
+    val lastTapAtMillis: Long? = null,
+)
+
+private const val DEBUG_TAP_THRESHOLD: Int = 5
+private const val DEBUG_TAP_WINDOW_MILLIS: Long = 1_200L

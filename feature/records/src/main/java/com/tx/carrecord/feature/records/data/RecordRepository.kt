@@ -8,6 +8,8 @@ import com.tx.carrecord.core.database.error.RoomRepositoryErrorMapper
 import com.tx.carrecord.core.database.model.MaintenanceRecordEntity
 import com.tx.carrecord.core.database.model.MaintenanceRecordItemEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
+import com.tx.carrecord.core.database.logging.AppDatabaseAuditLogger
+import com.tx.carrecord.core.database.logging.AppDatabaseSnapshot
 import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.core.datastore.AppliedCarContext
 import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
@@ -82,6 +84,7 @@ class RoomRecordRepository @Inject constructor(
     private val appDateContext: AppDateContext,
     private val appliedCarContext: AppliedCarContext,
     private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
+    private val auditLogger: AppDatabaseAuditLogger,
 ) : RecordRepository {
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
@@ -191,15 +194,23 @@ class RoomRecordRepository @Inject constructor(
                         return@withTransaction
                     }
 
+                    val updatedOriginalRecord = originalRecord.copy(
+                        itemIDsRaw = RecordsDomainRules.joinItemIDs(remainingItemIDs),
+                    )
                     dao.updateRecordById(
                         recordId = originalRecord.id,
                         carId = originalRecord.carId,
                         date = originalRecord.date,
-                        itemIDsRaw = RecordsDomainRules.joinItemIDs(remainingItemIDs),
+                        itemIDsRaw = updatedOriginalRecord.itemIDsRaw,
                         cost = originalRecord.cost,
                         mileage = originalRecord.mileage,
                         note = originalRecord.note,
                         cycleKey = originalRecord.cycleKey,
+                    )
+                    auditLogger.logUpdate(
+                        entity = "MaintenanceRecord",
+                        before = AppDatabaseSnapshot.maintenanceRecord(originalRecord),
+                        after = AppDatabaseSnapshot.maintenanceRecord(updatedOriginalRecord),
                     )
                     dao.replaceRecordItems(
                         recordId = originalRecord.id,
@@ -217,6 +228,26 @@ class RoomRecordRepository @Inject constructor(
                             )
                         },
                     )
+                    remainingItemIDs.forEach { itemId ->
+                        auditLogger.logInsert(
+                            entity = "MaintenanceRecordItem",
+                            data = AppDatabaseSnapshot.maintenanceRecordItem(
+                                MaintenanceRecordItemEntity(
+                                    id = RecordsDomainRules.cycleItemKey(
+                                        cycleKey = originalRecord.cycleKey,
+                                        itemId = itemId,
+                                    ),
+                                    recordId = originalRecord.id,
+                                    itemId = itemId,
+                                    cycleItemKey = RecordsDomainRules.cycleItemKey(
+                                        cycleKey = originalRecord.cycleKey,
+                                        itemId = itemId,
+                                    ),
+                                    createdAt = originalRecord.date,
+                                ),
+                            ),
+                        )
+                    }
 
                     val splitRecordEntity = MaintenanceRecordEntity(
                         id = success.plan.targetRecordId,
@@ -229,6 +260,10 @@ class RoomRecordRepository @Inject constructor(
                         cycleKey = success.plan.cycleKey,
                     )
                     dao.insertRecord(splitRecordEntity)
+                    auditLogger.logInsert(
+                        entity = "MaintenanceRecord",
+                        data = AppDatabaseSnapshot.maintenanceRecord(splitRecordEntity),
+                    )
                     dao.replaceRecordItems(
                         recordId = splitRecordEntity.id,
                         entities = success.plan.relationDrafts.map { draft ->
@@ -241,6 +276,20 @@ class RoomRecordRepository @Inject constructor(
                             )
                         },
                     )
+                    success.plan.relationDrafts.forEach { draft ->
+                        auditLogger.logInsert(
+                            entity = "MaintenanceRecordItem",
+                            data = AppDatabaseSnapshot.maintenanceRecordItem(
+                                MaintenanceRecordItemEntity(
+                                    id = draft.id,
+                                    recordId = draft.recordId,
+                                    itemId = draft.itemId,
+                                    cycleItemKey = draft.cycleItemKey,
+                                    createdAt = draft.createdAtEpochSeconds,
+                                ),
+                            ),
+                        )
+                    }
                 } else {
                     val recordEntity = MaintenanceRecordEntity(
                         id = success.plan.targetRecordId,
@@ -254,7 +303,13 @@ class RoomRecordRepository @Inject constructor(
                     )
                     if (request.recordId == null) {
                         dao.insertRecord(recordEntity)
+                        auditLogger.logInsert(
+                            entity = "MaintenanceRecord",
+                            data = AppDatabaseSnapshot.maintenanceRecord(recordEntity),
+                        )
                     } else {
+                        val beforeRecord = editingRecord
+                        val afterRecord = recordEntity
                         dao.updateRecordById(
                             recordId = success.plan.targetRecordId,
                             carId = recordEntity.carId,
@@ -265,6 +320,13 @@ class RoomRecordRepository @Inject constructor(
                             note = recordEntity.note,
                             cycleKey = recordEntity.cycleKey,
                         )
+                        if (beforeRecord != null) {
+                            auditLogger.logUpdate(
+                                entity = "MaintenanceRecord",
+                                before = AppDatabaseSnapshot.maintenanceRecord(beforeRecord),
+                                after = AppDatabaseSnapshot.maintenanceRecord(afterRecord),
+                            )
+                        }
                     }
 
                     dao.replaceRecordItems(
@@ -279,6 +341,20 @@ class RoomRecordRepository @Inject constructor(
                             )
                         },
                     )
+                    success.plan.relationDrafts.forEach { draft ->
+                        auditLogger.logInsert(
+                            entity = "MaintenanceRecordItem",
+                            data = AppDatabaseSnapshot.maintenanceRecordItem(
+                                MaintenanceRecordItemEntity(
+                                    id = draft.id,
+                                    recordId = draft.recordId,
+                                    itemId = draft.itemId,
+                                    cycleItemKey = draft.cycleItemKey,
+                                    createdAt = draft.createdAtEpochSeconds,
+                                ),
+                            ),
+                        )
+                    }
                 }
 
                 if (request.intervalDrafts.isNotEmpty()) {
@@ -288,25 +364,43 @@ class RoomRecordRepository @Inject constructor(
                         .associateBy { it.id }
                     request.intervalDrafts.forEach { draft ->
                         val option = availableOptions[draft.itemId] ?: return@forEach
-                        dao.updateItemOptionById(
-                            itemId = option.id,
-                            name = option.name,
-                            isDefault = option.isDefault,
-                            catalogKey = option.catalogKey,
+                        val updatedOption = option.copy(
                             remindByMileage = draft.remindByMileage,
                             mileageInterval = if (draft.remindByMileage) draft.mileageInterval.coerceAtLeast(1) else 0,
                             remindByTime = draft.remindByTime,
                             monthInterval = if (draft.remindByTime) draft.monthInterval.coerceAtLeast(1) else 0,
-                            warningStartPercent = option.warningStartPercent,
-                            dangerStartPercent = option.dangerStartPercent,
+                        )
+                        dao.updateItemOptionById(
+                            itemId = option.id,
+                            name = updatedOption.name,
+                            isDefault = updatedOption.isDefault,
+                            catalogKey = updatedOption.catalogKey,
+                            remindByMileage = updatedOption.remindByMileage,
+                            mileageInterval = updatedOption.mileageInterval,
+                            remindByTime = updatedOption.remindByTime,
+                            monthInterval = updatedOption.monthInterval,
+                            warningStartPercent = updatedOption.warningStartPercent,
+                            dangerStartPercent = updatedOption.dangerStartPercent,
+                        )
+                        auditLogger.logUpdate(
+                            entity = "MaintenanceItemOption",
+                            before = AppDatabaseSnapshot.maintenanceItemOption(option),
+                            after = AppDatabaseSnapshot.maintenanceItemOption(updatedOption),
                         )
                     }
                 }
 
                 if (success.plan.syncedCarMileage > car.mileage) {
+                    val beforeCar = car.copy()
+                    val afterCar = car.copy(mileage = success.plan.syncedCarMileage)
                     dao.updateCarMileage(
                         carId = resolvedCarId,
                         mileage = success.plan.syncedCarMileage,
+                    )
+                    auditLogger.logUpdate(
+                        entity = "Car",
+                        before = AppDatabaseSnapshot.car(beforeCar),
+                        after = AppDatabaseSnapshot.car(afterCar),
                     )
                 }
             }
@@ -335,9 +429,20 @@ class RoomRecordRepository @Inject constructor(
                         message = "未找到要删除的记录。",
                     ),
                 )
+            val existingRecordItems = dao.listRecordItemsByRecordId(existingRecord.id)
             database.withTransaction {
                 dao.deleteRecordById(existingRecord.id)
             }
+            existingRecordItems.forEach { recordItem ->
+                auditLogger.logDelete(
+                    entity = "MaintenanceRecordItem",
+                    data = AppDatabaseSnapshot.maintenanceRecordItem(recordItem),
+                )
+            }
+            auditLogger.logDelete(
+                entity = "MaintenanceRecord",
+                data = AppDatabaseSnapshot.maintenanceRecord(existingRecord),
+            )
             maintenanceDataChangeContext.notifyChanged()
             RepositoryResult.Success(Unit)
         }.getOrElse { throwable ->
@@ -380,19 +485,33 @@ class RoomRecordRepository @Inject constructor(
             }
 
             if (remainingItemIds.isEmpty()) {
+                val existingRecordItems = dao.listRecordItemsByRecordId(existingRecord.id)
                 database.withTransaction {
                     dao.deleteRecordById(existingRecord.id)
                 }
+                existingRecordItems.forEach { recordItem ->
+                    auditLogger.logDelete(
+                        entity = "MaintenanceRecordItem",
+                        data = AppDatabaseSnapshot.maintenanceRecordItem(recordItem),
+                    )
+                }
+                auditLogger.logDelete(
+                    entity = "MaintenanceRecord",
+                    data = AppDatabaseSnapshot.maintenanceRecord(existingRecord),
+                )
                 maintenanceDataChangeContext.notifyChanged()
                 return RepositoryResult.Success(DeleteRecordItemResult(deletedWholeRecord = true))
             }
 
+            val updatedRecord = existingRecord.copy(
+                itemIDsRaw = RecordsDomainRules.joinItemIDs(remainingItemIds),
+            )
             database.withTransaction {
                 dao.updateRecordById(
                     recordId = existingRecord.id,
                     carId = existingRecord.carId,
                     date = existingRecord.date,
-                    itemIDsRaw = RecordsDomainRules.joinItemIDs(remainingItemIds),
+                    itemIDsRaw = updatedRecord.itemIDsRaw,
                     cost = existingRecord.cost,
                     mileage = existingRecord.mileage,
                     note = existingRecord.note,
@@ -403,6 +522,29 @@ class RoomRecordRepository @Inject constructor(
                     itemId = itemId,
                 )
             }
+            auditLogger.logDelete(
+                entity = "MaintenanceRecordItem",
+                data = AppDatabaseSnapshot.maintenanceRecordItem(
+                    MaintenanceRecordItemEntity(
+                        id = RecordsDomainRules.cycleItemKey(
+                            cycleKey = existingRecord.cycleKey,
+                            itemId = itemId,
+                        ),
+                        recordId = existingRecord.id,
+                        itemId = itemId,
+                        cycleItemKey = RecordsDomainRules.cycleItemKey(
+                            cycleKey = existingRecord.cycleKey,
+                            itemId = itemId,
+                        ),
+                        createdAt = existingRecord.date,
+                    ),
+                ),
+            )
+            auditLogger.logUpdate(
+                entity = "MaintenanceRecord",
+                before = AppDatabaseSnapshot.maintenanceRecord(existingRecord),
+                after = AppDatabaseSnapshot.maintenanceRecord(updatedRecord),
+            )
             maintenanceDataChangeContext.notifyChanged()
             RepositoryResult.Success(DeleteRecordItemResult(deletedWholeRecord = false))
         }.getOrElse { throwable ->

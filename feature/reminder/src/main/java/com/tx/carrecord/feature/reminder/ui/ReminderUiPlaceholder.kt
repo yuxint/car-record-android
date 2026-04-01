@@ -320,8 +320,8 @@ private fun ReminderProgressBar(
 @Composable
 private fun progressColorFor(level: ProgressColorLevel): Color {
     return when (level) {
-        ProgressColorLevel.NORMAL -> Color(0xFF2E7D32)
-        ProgressColorLevel.WARNING -> Color(0xFFF9A825)
-        ProgressColorLevel.DANGER -> Color(0xFFC62828)
+        ProgressColorLevel.NORMAL -> Color(0xFF34C759)
+        ProgressColorLevel.WARNING -> Color(0xFFFFCC00)
+        ProgressColorLevel.DANGER -> Color(0xFFFF3B30)
     }
 }

@@ -5,9 +5,11 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.tx.carrecord.core.datastore.AppDateContext
+import com.tx.carrecord.core.datastore.DebugModeContext
 import com.tx.carrecord.core.datastore.AppNavigationContext
 import com.tx.carrecord.core.datastore.AppliedCarContext
 import com.tx.carrecord.core.datastore.DatastoreAppDateContext
+import com.tx.carrecord.core.datastore.DatastoreDebugModeContext
 import com.tx.carrecord.core.datastore.DatastoreAppNavigationContext
 import com.tx.carrecord.core.datastore.DatastoreAppliedCarContext
 import com.tx.carrecord.core.datastore.DatastoreMaintenanceDataChangeContext
@@ -42,6 +44,10 @@ abstract class RuntimeContextBindingModule {
     @Binds
     @Singleton
     abstract fun bindAppDateContext(impl: DatastoreAppDateContext): AppDateContext
+
+    @Binds
+    @Singleton
+    abstract fun bindDebugModeContext(impl: DatastoreDebugModeContext): DebugModeContext
 
     @Binds
     @Singleton

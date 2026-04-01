@@ -26,6 +26,7 @@ import com.tx.carrecord.core.datastore.RootTabRoute
 import com.tx.carrecord.feature.addcar.ui.AddCarEditorPage
 import com.tx.carrecord.feature.addcar.ui.AddCarManagementSection
 import com.tx.carrecord.feature.addcar.ui.AddCarViewModel
+import com.tx.carrecord.feature.my.ui.AppLogConsolePage
 import com.tx.carrecord.feature.my.ui.MyScreen
 import com.tx.carrecord.feature.records.ui.AddRecordPage
 import com.tx.carrecord.feature.records.ui.RecordsScreen
@@ -48,6 +49,7 @@ fun CarRecordRoot(
     val (isCarEditorPageVisible, setCarEditorPageVisible) = remember { mutableStateOf(false) }
     val (isRecordsAddPageVisible, setRecordsAddPageVisible) = remember { mutableStateOf(false) }
     val (isReminderAddPageVisible, setReminderAddPageVisible) = remember { mutableStateOf(false) }
+    val (isLogConsolePageVisible, setLogConsolePageVisible) = remember { mutableStateOf(false) }
     val isRecordEditorPageVisible = isRecordsAddPageVisible || isReminderAddPageVisible
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -86,16 +88,18 @@ fun CarRecordRoot(
                 )
                 RootTabRoute.MY -> MyScreen(
                     modifier = Modifier.padding(contentPadding),
-                ) { state ->
-                    AddCarManagementSection(
-                        viewModel = addCarViewModel,
-                        carAgeReferenceDate = state.currentDate,
-                        onOpenAddCarEditorPage = { setCarEditorPageVisible(true) },
-                        onOpenEditCarEditorPage = { setCarEditorPageVisible(true) },
-                    )
-                    DataTransferSection(
-                    )
-                }
+                    onOpenLogConsole = { setLogConsolePageVisible(true) },
+                    extraContent = { state ->
+                        AddCarManagementSection(
+                            viewModel = addCarViewModel,
+                            carAgeReferenceDate = state.currentDate,
+                            onOpenAddCarEditorPage = { setCarEditorPageVisible(true) },
+                            onOpenEditCarEditorPage = { setCarEditorPageVisible(true) },
+                        )
+                        DataTransferSection(
+                        )
+                    },
+                )
             }
         }
         BackHandler(enabled = isCarEditorPageVisible) {
@@ -107,6 +111,9 @@ fun CarRecordRoot(
             } else {
                 setReminderAddPageVisible(false)
             }
+        }
+        BackHandler(enabled = isLogConsolePageVisible) {
+            setLogConsolePageVisible(false)
         }
         AnimatedVisibility(
             visible = isCarEditorPageVisible,
@@ -176,9 +183,29 @@ fun CarRecordRoot(
                 onIntervalConfirmYearChange = recordsViewModel::updateIntervalConfirmYear,
                 onDateClick = recordsViewModel::updateMaintenanceDate,
                 onMileageClick = recordsViewModel::updateMileage,
-                onItemToggle = recordsViewModel::toggleItem,
+                onItemSelectionConfirm = recordsViewModel::setSelectedItems,
                 onCostChange = recordsViewModel::updateCostText,
                 onNoteChange = recordsViewModel::updateNote,
+            )
+        }
+        AnimatedVisibility(
+            visible = isLogConsolePageVisible,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxSize()
+                .statusBarsPadding(),
+            enter = slideInHorizontally(
+                animationSpec = tween(OVERLAY_PAGE_ANIMATION_DURATION_MS),
+                initialOffsetX = { fullWidth -> fullWidth },
+            ),
+            exit = slideOutHorizontally(
+                animationSpec = tween(OVERLAY_PAGE_ANIMATION_DURATION_MS),
+                targetOffsetX = { fullWidth -> fullWidth },
+            ),
+        ) {
+            AppLogConsolePage(
+                modifier = Modifier.fillMaxSize(),
+                onBack = { setLogConsolePageVisible(false) },
             )
         }
     }

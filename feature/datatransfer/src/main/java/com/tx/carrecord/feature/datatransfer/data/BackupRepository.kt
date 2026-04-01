@@ -10,9 +10,12 @@ import com.tx.carrecord.core.database.model.MaintenanceItemOptionEntity
 import com.tx.carrecord.core.database.model.MaintenanceRecordEntity
 import com.tx.carrecord.core.database.model.MaintenanceRecordItemEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
+import com.tx.carrecord.core.database.logging.AppDatabaseAuditLogger
+import com.tx.carrecord.core.database.logging.AppDatabaseSnapshot
 import com.tx.carrecord.core.datastore.AppliedCarContext
 import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.core.common.time.AppTimeCodec
+import com.tx.carrecord.core.datastore.logging.AppLogger
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportCarSnapshot
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportItemOptionSnapshot
 import com.tx.carrecord.feature.datatransfer.domain.BackupExportRecordSnapshot
@@ -45,6 +48,8 @@ class RoomBackupRepository @Inject constructor(
     private val dao: CarRecordDao,
     private val appliedCarContext: AppliedCarContext,
     private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
+    private val appLogger: AppLogger,
+    private val auditLogger: AppDatabaseAuditLogger,
 ) : BackupRepository {
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
@@ -74,6 +79,23 @@ class RoomBackupRepository @Inject constructor(
             var importedCarCount = 0
             var importedItemOptionCount = 0
             var importedRecordCount = 0
+            var clearedCars: List<CarEntity> = emptyList()
+            var clearedItemOptions: List<MaintenanceItemOptionEntity> = emptyList()
+            var clearedRecords: List<MaintenanceRecordEntity> = emptyList()
+            var clearedRecordItems: List<MaintenanceRecordItemEntity> = emptyList()
+
+            if (success.plan.shouldClearBusinessDataBeforeImport) {
+                clearedCars = dao.listCars()
+                clearedItemOptions = dao.listItemOptions()
+                clearedRecords = dao.listRecords()
+                clearedRecordItems = clearedRecords.flatMap { record ->
+                    dao.listRecordItemsByRecordId(record.id)
+                }
+                appLogger.info(
+                    "开始清空恢复前业务数据",
+                    payload = "cars=${clearedCars.size}, items=${clearedItemOptions.size}, records=${clearedRecords.size}, recordItems=${clearedRecordItems.size}",
+                )
+            }
 
             database.withTransaction {
                 if (success.plan.shouldClearBusinessDataBeforeImport) {
@@ -81,19 +103,19 @@ class RoomBackupRepository @Inject constructor(
                 }
 
                 for (carDraft in success.plan.carDrafts) {
-                    dao.insertCar(
-                        entity = CarEntity(
-                            id = carDraft.car.id,
-                            brand = carDraft.car.brand,
-                            modelName = carDraft.car.modelName,
-                            mileage = carDraft.car.mileage,
-                            purchaseDate = AppTimeCodec.toEpochSecondsAtStartOfDay(
-                                date = carDraft.normalizedPurchaseDate,
-                                zoneId = zoneId,
-                            ),
-                            disabledItemIDsRaw = carDraft.car.disabledItemIDsRaw,
+                    val insertedCar = CarEntity(
+                        id = carDraft.car.id,
+                        brand = carDraft.car.brand,
+                        modelName = carDraft.car.modelName,
+                        mileage = carDraft.car.mileage,
+                        purchaseDate = AppTimeCodec.toEpochSecondsAtStartOfDay(
+                            date = carDraft.normalizedPurchaseDate,
+                            zoneId = zoneId,
                         ),
+                        disabledItemIDsRaw = carDraft.car.disabledItemIDsRaw,
                     )
+                    dao.insertCar(entity = insertedCar)
+                    auditLogger.logInsert("Car", AppDatabaseSnapshot.car(insertedCar))
                     importedCarCount += 1
 
                     val optionEntities = carDraft.itemDrafts.map { itemDraft ->
@@ -116,26 +138,32 @@ class RoomBackupRepository @Inject constructor(
                     }
                     if (optionEntities.isNotEmpty()) {
                         dao.insertItemOptions(optionEntities)
+                        optionEntities.forEach { optionEntity ->
+                            auditLogger.logInsert(
+                                entity = "MaintenanceItemOption",
+                                data = AppDatabaseSnapshot.maintenanceItemOption(optionEntity),
+                            )
+                        }
                     }
                     importedItemOptionCount += optionEntities.size
 
                     for (recordDraft in carDraft.recordDrafts) {
                         val cycleKey = "${carDraft.car.id}|${AppTimeCodec.formatDate(recordDraft.normalizedDate)}"
-                        dao.insertRecord(
-                            entity = MaintenanceRecordEntity(
-                                id = recordDraft.record.id,
-                                carId = carDraft.car.id,
-                                date = AppTimeCodec.toEpochSecondsAtStartOfDay(
-                                    date = recordDraft.normalizedDate,
-                                    zoneId = zoneId,
-                                ),
-                                itemIDsRaw = recordDraft.mappedItemIDsRaw,
-                                cost = recordDraft.record.cost,
-                                mileage = recordDraft.record.mileage,
-                                note = recordDraft.record.note,
-                                cycleKey = cycleKey,
+                        val insertedRecord = MaintenanceRecordEntity(
+                            id = recordDraft.record.id,
+                            carId = carDraft.car.id,
+                            date = AppTimeCodec.toEpochSecondsAtStartOfDay(
+                                date = recordDraft.normalizedDate,
+                                zoneId = zoneId,
                             ),
+                            itemIDsRaw = recordDraft.mappedItemIDsRaw,
+                            cost = recordDraft.record.cost,
+                            mileage = recordDraft.record.mileage,
+                            note = recordDraft.record.note,
+                            cycleKey = cycleKey,
                         )
+                        dao.insertRecord(entity = insertedRecord)
+                        auditLogger.logInsert("MaintenanceRecord", AppDatabaseSnapshot.maintenanceRecord(insertedRecord))
 
                         val recordItems = recordDraft.mappedItemIds.map { itemId ->
                             MaintenanceRecordItemEntity(
@@ -151,10 +179,44 @@ class RoomBackupRepository @Inject constructor(
                         }
                         if (recordItems.isNotEmpty()) {
                             dao.insertRecordItems(recordItems)
+                            recordItems.forEach { recordItem ->
+                                auditLogger.logInsert(
+                                    entity = "MaintenanceRecordItem",
+                                    data = AppDatabaseSnapshot.maintenanceRecordItem(recordItem),
+                                )
+                            }
                         }
                         importedRecordCount += 1
                     }
                 }
+            }
+
+            if (success.plan.shouldClearBusinessDataBeforeImport) {
+                clearedCars.forEach { car ->
+                    auditLogger.logDelete("Car", AppDatabaseSnapshot.car(car))
+                }
+                clearedItemOptions.forEach { option ->
+                    auditLogger.logDelete(
+                        entity = "MaintenanceItemOption",
+                        data = AppDatabaseSnapshot.maintenanceItemOption(option),
+                    )
+                }
+                clearedRecords.forEach { record ->
+                    auditLogger.logDelete(
+                        entity = "MaintenanceRecord",
+                        data = AppDatabaseSnapshot.maintenanceRecord(record),
+                    )
+                }
+                clearedRecordItems.forEach { recordItem ->
+                    auditLogger.logDelete(
+                        entity = "MaintenanceRecordItem",
+                        data = AppDatabaseSnapshot.maintenanceRecordItem(recordItem),
+                    )
+                }
+                appLogger.info(
+                    "恢复前业务数据已清空",
+                    payload = "cars=${clearedCars.size}, items=${clearedItemOptions.size}, records=${clearedRecords.size}, recordItems=${clearedRecordItems.size}",
+                )
             }
 
             val carUUIDs = dao.listCars().mapNotNull { entity ->
@@ -177,8 +239,35 @@ class RoomBackupRepository @Inject constructor(
 
     override suspend fun resetBusinessData(): RepositoryResult<Unit> {
         return runCatching {
+            val existingCars = dao.listCars()
+            val existingItemOptions = dao.listItemOptions()
+            val existingRecords = dao.listRecords()
+            val existingRecordItems = existingRecords.flatMap { record ->
+                dao.listRecordItemsByRecordId(record.id)
+            }
             database.withTransaction {
                 clearBusinessData()
+            }
+            existingCars.forEach { car ->
+                auditLogger.logDelete("Car", AppDatabaseSnapshot.car(car))
+            }
+            existingItemOptions.forEach { option ->
+                auditLogger.logDelete(
+                    entity = "MaintenanceItemOption",
+                    data = AppDatabaseSnapshot.maintenanceItemOption(option),
+                )
+            }
+            existingRecords.forEach { record ->
+                auditLogger.logDelete(
+                    entity = "MaintenanceRecord",
+                    data = AppDatabaseSnapshot.maintenanceRecord(record),
+                )
+            }
+            existingRecordItems.forEach { recordItem ->
+                auditLogger.logDelete(
+                    entity = "MaintenanceRecordItem",
+                    data = AppDatabaseSnapshot.maintenanceRecordItem(recordItem),
+                )
             }
             appliedCarContext.normalizeAndPersist(emptyList())
             maintenanceDataChangeContext.notifyChanged()
@@ -218,7 +307,7 @@ class RoomBackupRepository @Inject constructor(
         BackupExportItemOptionSnapshot(
             id = id,
             name = name,
-            ownerCarId = ownerCarID,
+            ownerCarID = ownerCarID,
             isDefault = isDefault,
             catalogKey = catalogKey,
             remindByMileage = remindByMileage,
@@ -232,7 +321,7 @@ class RoomBackupRepository @Inject constructor(
 
     private fun MaintenanceRecordEntity.toExportSnapshot(): BackupExportRecordSnapshot = BackupExportRecordSnapshot(
         id = id,
-        carId = carId,
+        carID = carId,
         date = AppTimeCodec.fromEpochSecondsAtZone(
             epochSeconds = date,
             zoneId = zoneId,

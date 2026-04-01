@@ -32,9 +32,11 @@ ksp {
 
 dependencies {
     implementation(project(":core:common"))
+    implementation(project(":core:datastore"))
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.kotlinx.serialization.json)
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.hilt.android)

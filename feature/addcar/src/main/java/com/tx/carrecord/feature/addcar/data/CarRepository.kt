@@ -9,6 +9,8 @@ import com.tx.carrecord.core.database.error.RoomRepositoryErrorMapper
 import com.tx.carrecord.core.database.model.CarEntity
 import com.tx.carrecord.core.database.model.MaintenanceItemOptionEntity
 import com.tx.carrecord.core.database.room.CarRecordDatabase
+import com.tx.carrecord.core.database.logging.AppDatabaseAuditLogger
+import com.tx.carrecord.core.database.logging.AppDatabaseSnapshot
 import com.tx.carrecord.core.datastore.AppliedCarContext
 import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.core.common.time.AppTimeCodec
@@ -108,6 +110,7 @@ class RoomCarRepository @Inject constructor(
     private val dao: CarRecordDao,
     private val appliedCarContext: AppliedCarContext,
     private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
+    private val auditLogger: AppDatabaseAuditLogger,
 ) : CarRepository {
     private companion object {
         const val ITEM_ID_SEPARATOR: Char = '|'
@@ -258,6 +261,12 @@ class RoomCarRepository @Inject constructor(
                     dao.insertItemOptions(entities)
                 }
             }
+            entities.forEach { entity ->
+                auditLogger.logInsert(
+                    entity = "MaintenanceItemOption",
+                    data = AppDatabaseSnapshot.maintenanceItemOption(entity),
+                )
+            }
             if (entities.isNotEmpty()) {
                 maintenanceDataChangeContext.notifyChanged()
             }
@@ -299,28 +308,41 @@ class RoomCarRepository @Inject constructor(
             val targetCarId = request.editingCarId ?: UUID.randomUUID().toString()
             database.withTransaction {
                 if (request.editingCarId == null) {
-                    dao.insertCar(
-                        entity = CarEntity(
-                            id = targetCarId,
-                            brand = success.plan.normalizedBrand,
-                            modelName = success.plan.normalizedModelName,
-                            mileage = request.mileage,
-                            purchaseDate = request.purchaseDateEpochSeconds,
-                            disabledItemIDsRaw = success.plan.normalizedDisabledItemIDsRaw,
-                        ),
-                    )
-                } else {
-                    val updated = dao.updateCarById(
-                        carId = targetCarId,
+                    val insertedCar = CarEntity(
+                        id = targetCarId,
                         brand = success.plan.normalizedBrand,
                         modelName = success.plan.normalizedModelName,
                         mileage = request.mileage,
                         purchaseDate = request.purchaseDateEpochSeconds,
                         disabledItemIDsRaw = success.plan.normalizedDisabledItemIDsRaw,
                     )
+                    dao.insertCar(entity = insertedCar)
+                    auditLogger.logInsert("Car", AppDatabaseSnapshot.car(insertedCar))
+                } else {
+                    val existingCar = existingCars.first { it.id == targetCarId }
+                    val updatedCar = existingCar.copy(
+                        brand = success.plan.normalizedBrand,
+                        modelName = success.plan.normalizedModelName,
+                        mileage = request.mileage,
+                        purchaseDate = request.purchaseDateEpochSeconds,
+                        disabledItemIDsRaw = success.plan.normalizedDisabledItemIDsRaw,
+                    )
+                    val updated = dao.updateCarById(
+                        carId = targetCarId,
+                        brand = updatedCar.brand,
+                        modelName = updatedCar.modelName,
+                        mileage = updatedCar.mileage,
+                        purchaseDate = updatedCar.purchaseDate,
+                        disabledItemIDsRaw = updatedCar.disabledItemIDsRaw,
+                    )
                     if (updated <= 0) {
                         throw IllegalStateException("CAR_NOT_FOUND_FOR_UPDATE")
                     }
+                    auditLogger.logUpdate(
+                        entity = "Car",
+                        before = AppDatabaseSnapshot.car(existingCar),
+                        after = AppDatabaseSnapshot.car(updatedCar),
+                    )
                 }
 
                 request.itemOptionSaveRequest?.let { itemOptionSaveRequest ->
@@ -374,10 +396,37 @@ class RoomCarRepository @Inject constructor(
                         code = "CAR_NOT_FOUND",
                         message = "未找到要删除的车辆。",
                     ),
-                )
+            )
+            val existingCar = existingCars.firstOrNull { it.id == success.plan.deletedCarId }
+            val relatedItemOptions = dao.listItemOptionsByCarId(success.plan.deletedCarId)
+            val relatedRecords = dao.listRecordsByCarId(success.plan.deletedCarId)
+            val relatedRecordItems = relatedRecords.flatMap { record ->
+                dao.listRecordItemsByRecordId(record.id)
+            }
 
             database.withTransaction {
                 dao.deleteCarById(success.plan.deletedCarId)
+            }
+            existingCar?.let {
+                auditLogger.logDelete("Car", AppDatabaseSnapshot.car(it))
+            }
+            relatedItemOptions.forEach { option ->
+                auditLogger.logDelete(
+                    entity = "MaintenanceItemOption",
+                    data = AppDatabaseSnapshot.maintenanceItemOption(option),
+                )
+            }
+            relatedRecords.forEach { record ->
+                auditLogger.logDelete(
+                    entity = "MaintenanceRecord",
+                    data = AppDatabaseSnapshot.maintenanceRecord(record),
+                )
+            }
+            relatedRecordItems.forEach { recordItem ->
+                auditLogger.logDelete(
+                    entity = "MaintenanceRecordItem",
+                    data = AppDatabaseSnapshot.maintenanceRecordItem(recordItem),
+                )
             }
             appliedCarContext.setRawAppliedCarId(success.plan.normalizedRawAppliedCarId)
             maintenanceDataChangeContext.notifyChanged()
@@ -551,25 +600,27 @@ class RoomCarRepository @Inject constructor(
         plan.normalizedDrafts.forEach { draft ->
             val existing = plan.existingById[draft.id]
             if (existing == null) {
-                dao.insertItemOption(
-                    entity = MaintenanceItemOptionEntity(
-                        id = draft.id,
-                        name = draft.name,
-                        ownerCarID = plan.carId,
-                        isDefault = draft.isDefault,
-                        catalogKey = draft.catalogKey,
-                        remindByMileage = draft.remindByMileage,
-                        mileageInterval = draft.mileageInterval,
-                        remindByTime = draft.remindByTime,
-                        monthInterval = draft.monthInterval,
-                        warningStartPercent = draft.warningStartPercent,
-                        dangerStartPercent = draft.dangerStartPercent,
-                        createdAt = nowEpoch,
-                    ),
+                val inserted = MaintenanceItemOptionEntity(
+                    id = draft.id,
+                    name = draft.name,
+                    ownerCarID = plan.carId,
+                    isDefault = draft.isDefault,
+                    catalogKey = draft.catalogKey,
+                    remindByMileage = draft.remindByMileage,
+                    mileageInterval = draft.mileageInterval,
+                    remindByTime = draft.remindByTime,
+                    monthInterval = draft.monthInterval,
+                    warningStartPercent = draft.warningStartPercent,
+                    dangerStartPercent = draft.dangerStartPercent,
+                    createdAt = nowEpoch,
+                )
+                dao.insertItemOption(entity = inserted)
+                auditLogger.logInsert(
+                    entity = "MaintenanceItemOption",
+                    data = AppDatabaseSnapshot.maintenanceItemOption(inserted),
                 )
             } else {
-                dao.updateItemOptionById(
-                    itemId = draft.id,
+                val updated = existing.copy(
                     name = draft.name,
                     isDefault = draft.isDefault,
                     catalogKey = draft.catalogKey,
@@ -580,11 +631,32 @@ class RoomCarRepository @Inject constructor(
                     warningStartPercent = draft.warningStartPercent,
                     dangerStartPercent = draft.dangerStartPercent,
                 )
+                dao.updateItemOptionById(
+                    itemId = draft.id,
+                    name = updated.name,
+                    isDefault = updated.isDefault,
+                    catalogKey = updated.catalogKey,
+                    remindByMileage = updated.remindByMileage,
+                    mileageInterval = updated.mileageInterval,
+                    remindByTime = updated.remindByTime,
+                    monthInterval = updated.monthInterval,
+                    warningStartPercent = updated.warningStartPercent,
+                    dangerStartPercent = updated.dangerStartPercent,
+                )
+                auditLogger.logUpdate(
+                    entity = "MaintenanceItemOption",
+                    before = AppDatabaseSnapshot.maintenanceItemOption(existing),
+                    after = AppDatabaseSnapshot.maintenanceItemOption(updated),
+                )
             }
         }
 
         plan.removingCustomOptions.forEach { option ->
             dao.deleteItemOptionById(option.id)
+            auditLogger.logDelete(
+                entity = "MaintenanceItemOption",
+                data = AppDatabaseSnapshot.maintenanceItemOption(option),
+            )
         }
 
         dao.updateCarDisabledItemIDsRaw(

@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertFalse
 
 class MyDataTransferRulesTest {
     @Test
@@ -137,60 +138,60 @@ class MyDataTransferRulesTest {
         )
     }
 
-//    @Test
-//    fun buildExportPayload_导出结果应稳定排序并使用catalogKey() {
-//        val payload = MyDataTransferRules.buildExportPayload(
-//            cars = listOf(
-//                BackupExportCarSnapshot(
-//                    id = "22222222-2222-2222-2222-222222222222",
-//                    brand = "本田",
-//                    modelName = "思域",
-//                    mileage = 10000,
-//                    disabledItemIDsRaw = "",
-//                    purchaseDate = LocalDate.parse("2026-05-01"),
-//                ),
-//                BackupExportCarSnapshot(
-//                    id = "11111111-1111-1111-1111-111111111111",
-//                    brand = "日产",
-//                    modelName = "轩逸",
-//                    mileage = 8000,
-//                    disabledItemIDsRaw = "",
-//                    purchaseDate = LocalDate.parse("2026-03-01"),
-//                ),
-//            ),
-//            itemOptions = listOf(
-//                BackupExportItemOptionSnapshot(
-//                    id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-//                    name = "机油",
-//                    ownerCarId = "22222222-2222-2222-2222-222222222222",
-//                    isDefault = true,
-//                    catalogKey = "engine-oil",
-//                    remindByMileage = true,
-//                    mileageInterval = 5000,
-//                    remindByTime = false,
-//                    monthInterval = 0,
-//                    warningStartPercent = 80,
-//                    dangerStartPercent = 100,
-//                    createdAtEpochSeconds = 10,
-//                ),
-//            ),
-//            records = listOf(
-//                BackupExportRecordSnapshot(
-//                    id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-//                    carId = "22222222-2222-2222-2222-222222222222",
-//                    date = LocalDate.parse("2026-05-05"),
-//                    itemIDsRaw = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-//                    cost = 300.0,
-//                    mileage = 12000,
-//                    note = "",
-//                ),
-//            ),
-//        )
-//
-//        assertEquals("日产", payload.vehicles.first().car.brand)
-//        assertEquals(listOf("engine-oil"), payload.vehicles[1].serviceLogs.first().itemNames)
-//        assertEquals("本田", payload.modelProfiles.first().brand)
-//    }
+    @Test
+    fun encodePayload_数值字段应使用普通十进制文本() {
+        val payload = MyDataTransferPayload(
+            modelProfiles = listOf(
+                MyDataTransferModelProfilePayload(
+                    brand = "本田",
+                    modelName = "思域",
+                    serviceItems = listOf(
+                        MyDataTransferItemPayload(
+                            id = "11111111-1111-1111-1111-111111111111",
+                            name = "机油",
+                            isDefault = true,
+                            catalogKey = "engine-oil",
+                            remindByMileage = true,
+                            mileageInterval = 5000,
+                            remindByTime = false,
+                            monthInterval = 0,
+                            warningStartPercent = 80,
+                            dangerStartPercent = 100,
+                            createdAt = 1700000000.0,
+                        ),
+                    ),
+                ),
+            ),
+            vehicles = listOf(
+                MyDataTransferVehiclePayload(
+                    car = MyDataTransferCarPayload(
+                        id = "22222222-2222-2222-2222-222222222222",
+                        brand = "本田",
+                        modelName = "思域",
+                        mileage = 12000,
+                        disabledItemIDsRaw = "",
+                        purchaseDate = "2026-02-03",
+                    ),
+                    serviceLogs = listOf(
+                        MyDataTransferLogPayload(
+                            id = "33333333-3333-3333-3333-333333333333",
+                            date = "2026-03-03",
+                            itemNames = listOf("engine-oil"),
+                            cost = 328.5,
+                            mileage = 15000,
+                            note = "",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val json = MyDataTransferRules.encodePayload(payload)
+
+        assertContains(json, "\"createdAt\": 1700000000")
+        assertContains(json, "\"cost\": 328.5")
+        assertFalse(Regex("""\b\d+(?:\.\d+)?[eE][+-]?\d+\b""").containsMatchIn(json))
+    }
 
     private fun sampleItemPayload(
         id: String,

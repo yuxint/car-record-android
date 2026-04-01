@@ -2,6 +2,7 @@ package com.tx.carrecord.feature.datatransfer.ui
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -13,7 +14,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,8 +32,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tx.carrecord.core.common.RepositoryResult
+import com.tx.carrecord.core.datastore.logging.AppLogger
 import com.tx.carrecord.feature.datatransfer.data.BackupRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +46,7 @@ import kotlinx.coroutines.launch
 
 private const val DATA_MANAGEMENT_HINT_TEXT =
     "备份按车型保存保养项目配置与车辆记录。恢复会使用备份内容覆盖当前数据，且在有数据时先二次确认再清空。"
+private const val TRANSFER_RESULT_TITLE = "备份恢复结果"
 private const val RESTORE_CONFIRM_TITLE = "确认恢复数据？"
 private const val RESTORE_CONFIRM_TEXT = "恢复会先清空当前全部数据，再导入备份文件。"
 private const val RESTORE_CONFIRM_ACTION = "确认恢复"
@@ -57,21 +62,30 @@ data class DataTransferUiState(
 @HiltViewModel
 class DataTransferViewModel @Inject constructor(
     private val backupRepository: BackupRepository,
+    private val appLogger: AppLogger,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(DataTransferUiState())
     val uiState: StateFlow<DataTransferUiState> = _uiState.asStateFlow()
 
     fun exportBackup() {
         viewModelScope.launch {
+            appLogger.info("开始备份数据")
             when (val result = backupRepository.exportBackupJson()) {
                 is RepositoryResult.Success -> {
+                    appLogger.info(
+                        message = "备份数据已生成",
+                        payload = "jsonLength=${result.value.length}",
+                    )
                     _uiState.value = _uiState.value.copy(
                         exportJsonPendingWrite = result.value,
-                        message = "已生成备份内容，请选择文件保存",
                     )
                 }
 
                 is RepositoryResult.Failure -> {
+                    appLogger.error(
+                        message = "备份数据失败",
+                        payload = result.error.message,
+                    )
                     _uiState.value = _uiState.value.copy(message = result.error.message)
                 }
             }
@@ -82,28 +96,35 @@ class DataTransferViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(exportJsonPendingWrite = null)
     }
 
-    fun onExportWriteResult(success: Boolean, detail: String? = null) {
-        _uiState.value = _uiState.value.copy(
-            message = if (success) {
-                "备份导出成功"
-            } else {
-                detail ?: "备份导出失败"
-            },
-        )
+    fun onTransferResultConsumed() {
+        _uiState.value = _uiState.value.copy(message = null)
+    }
+
+    fun showTransferResult(message: String) {
+        _uiState.value = _uiState.value.copy(message = message)
     }
 
     fun importBackup(
         jsonText: String,
     ) {
         viewModelScope.launch {
+            appLogger.info("开始恢复数据")
             when (val result = backupRepository.importBackupJson(jsonText)) {
                 is RepositoryResult.Success -> {
+                    appLogger.info(
+                        message = "恢复数据完成",
+                        payload = "cars=${result.value.importedCarCount}, items=${result.value.importedItemOptionCount}, records=${result.value.importedRecordCount}",
+                    )
                     _uiState.value = _uiState.value.copy(
-                        message = "导入完成：车辆${result.value.importedCarCount}，项目${result.value.importedItemOptionCount}，记录${result.value.importedRecordCount}",
+                        message = "恢复完成：恢复项目${result.value.importedItemOptionCount}项，恢复车辆${result.value.importedCarCount}辆，恢复保养记录${result.value.importedRecordCount}条。",
                     )
                 }
 
                 is RepositoryResult.Failure -> {
+                    appLogger.error(
+                        message = "恢复数据失败",
+                        payload = result.error.message,
+                    )
                     _uiState.value = _uiState.value.copy(message = result.error.message)
                 }
             }
@@ -112,12 +133,18 @@ class DataTransferViewModel @Inject constructor(
 
     fun resetAllData() {
         viewModelScope.launch {
+            appLogger.info("开始重置全部数据")
             when (val result = backupRepository.resetBusinessData()) {
                 is RepositoryResult.Success -> {
-                    _uiState.value = _uiState.value.copy(message = "已重置全部数据")
+                    appLogger.info("重置全部数据完成")
+                    _uiState.value = _uiState.value.copy(message = null)
                 }
 
                 is RepositoryResult.Failure -> {
+                    appLogger.error(
+                        message = "重置全部数据失败",
+                        payload = result.error.message,
+                    )
                     _uiState.value = _uiState.value.copy(message = result.error.message)
                 }
             }
@@ -129,8 +156,13 @@ class DataTransferViewModel @Inject constructor(
         onProceedImport: () -> Unit,
     ) {
         viewModelScope.launch {
+            appLogger.info("检查恢复前是否需要二次确认")
             when (val result = backupRepository.hasAnyBusinessData()) {
                 is RepositoryResult.Success -> {
+                    appLogger.info(
+                        message = "是否存在业务数据",
+                        payload = result.value,
+                    )
                     if (result.value) {
                         onNeedConfirm()
                     } else {
@@ -139,6 +171,10 @@ class DataTransferViewModel @Inject constructor(
                 }
 
                 is RepositoryResult.Failure -> {
+                    appLogger.error(
+                        message = "检查业务数据失败",
+                        payload = result.error.message,
+                    )
                     _uiState.value = _uiState.value.copy(message = result.error.message)
                 }
             }
@@ -159,7 +195,6 @@ fun DataTransferSection(
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         val json = uiState.exportJsonPendingWrite
         if (uri == null || json == null) {
-            viewModel.onExportWriteResult(success = false, detail = "未选择导出文件")
             viewModel.onExportWriteConsumed()
             return@rememberLauncherForActivityResult
         }
@@ -169,22 +204,22 @@ fun DataTransferSection(
             uri = uri,
             text = json,
         )
-        viewModel.onExportWriteResult(
-            success = writeResult,
-            detail = if (writeResult) null else "写入备份文件失败",
-        )
+        if (writeResult) {
+            viewModel.showTransferResult("备份成功：${resolveDisplayName(context, uri)}")
+        } else {
+            viewModel.showTransferResult("备份失败：写入备份文件失败")
+        }
         viewModel.onExportWriteConsumed()
     }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) {
-            viewModel.onExportWriteResult(success = false, detail = "未选择恢复文件")
             return@rememberLauncherForActivityResult
         }
 
         val importText = readTextFromUri(context, uri)
         if (importText == null) {
-            viewModel.onExportWriteResult(success = false, detail = "读取恢复文件失败")
+            viewModel.showTransferResult("恢复失败：读取恢复文件失败")
             return@rememberLauncherForActivityResult
         }
         viewModel.importBackup(importText)
@@ -192,7 +227,7 @@ fun DataTransferSection(
 
     LaunchedEffect(uiState.exportJsonPendingWrite) {
         if (uiState.exportJsonPendingWrite != null) {
-            exportLauncher.launch("car-record-backup.json")
+            exportLauncher.launch(buildBackupFilename())
         }
     }
 
@@ -238,10 +273,6 @@ fun DataTransferSection(
             }
 
             StatusMessage(text = DATA_MANAGEMENT_HINT_TEXT)
-            uiState.message?.let {
-                HorizontalDivider()
-                StatusMessage(text = it)
-            }
         }
     }
 
@@ -290,6 +321,19 @@ fun DataTransferSection(
             },
         )
     }
+
+    uiState.message?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::onTransferResultConsumed,
+            title = { Text(text = TRANSFER_RESULT_TITLE) },
+            text = { Text(text = message) },
+            confirmButton = {
+                TextButton(onClick = viewModel::onTransferResultConsumed) {
+                    Text(text = "知道了")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -325,4 +369,29 @@ private fun readTextFromUri(
             reader?.readText()
         }
     }.getOrNull()
+}
+
+private fun resolveDisplayName(
+    context: Context,
+    uri: Uri,
+): String {
+    return runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex >= 0 && cursor.moveToFirst()) {
+                cursor.getString(nameIndex)
+            } else {
+                null
+            }
+        }
+    }.getOrNull()
+        ?.takeIf { it.isNotBlank() }
+        ?: uri.lastPathSegment.orEmpty()
+}
+
+private fun buildBackupFilename(): String {
+    val formatter = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.CHINA).apply {
+        isLenient = false
+    }
+    return "car-record-backup-${formatter.format(Date())}.json"
 }

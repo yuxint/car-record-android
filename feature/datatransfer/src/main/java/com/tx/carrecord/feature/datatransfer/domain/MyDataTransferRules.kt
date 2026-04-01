@@ -71,14 +71,14 @@ object MyDataTransferRules {
             compareBy<BackupExportCarSnapshot>({ it.purchaseDate }, { it.id.lowercase() }),
         )
         val optionsByCarId = itemOptions
-            .groupBy { it.ownerCarId.orEmpty() }
+            .groupBy { it.ownerCarID.orEmpty() }
             .mapValues { (_, scoped) ->
                 scoped.sortedWith(
                     compareBy<BackupExportItemOptionSnapshot>({ it.createdAtEpochSeconds }, { it.id.lowercase() }),
                 )
             }
         val recordsByCarId = records
-            .groupBy { it.carId }
+            .groupBy { it.carID }
             .mapValues { (_, scoped) ->
                 scoped.sortedWith(
                     compareBy<BackupExportRecordSnapshot>({ it.date }, { it.mileage }, { it.id.lowercase() }),

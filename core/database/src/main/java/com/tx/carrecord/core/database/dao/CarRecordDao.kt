@@ -98,6 +98,9 @@ interface CarRecordDao {
     @Query("DELETE FROM maintenance_record_items WHERE record_id = :recordId AND item_id = :itemId")
     suspend fun deleteRecordItemByRecordIdAndItemId(recordId: String, itemId: String): Int
 
+    @Query("SELECT * FROM maintenance_record_items WHERE record_id = :recordId ORDER BY created_at ASC, id ASC")
+    suspend fun listRecordItemsByRecordId(recordId: String): List<MaintenanceRecordItemEntity>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertRecordItems(entities: List<MaintenanceRecordItemEntity>)
 

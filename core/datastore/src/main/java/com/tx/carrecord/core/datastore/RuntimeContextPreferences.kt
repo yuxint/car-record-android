@@ -11,6 +11,8 @@ internal object RuntimeContextPreferenceKeys {
     val appDateManualNowTimestamp: Preferences.Key<Long> =
         longPreferencesKey(name = "app_date_manual_now_timestamp")
     val appliedCarId: Preferences.Key<String> = stringPreferencesKey(name = "applied_car_id")
+    val appDebugModeEnabled: Preferences.Key<Boolean> =
+        booleanPreferencesKey(name = "app_debug_mode_enabled")
     val rootTabNavigationTarget: Preferences.Key<String> =
         stringPreferencesKey(name = "root_tab_navigation_target")
     val rootTabNavigationNonce: Preferences.Key<String> =

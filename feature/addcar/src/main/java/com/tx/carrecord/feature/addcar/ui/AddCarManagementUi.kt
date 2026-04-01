@@ -8,6 +8,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -61,6 +63,7 @@ import com.tx.carrecord.core.common.maintenance.MaintenanceItemConfig
 import com.tx.carrecord.core.datastore.AppDateContext
 import com.tx.carrecord.core.datastore.MaintenanceDataChangeContext
 import com.tx.carrecord.core.common.time.AppTimeCodec
+import com.tx.carrecord.core.datastore.logging.AppLogger
 import com.tx.carrecord.feature.addcar.data.CarItemOptionSnapshot
 import com.tx.carrecord.feature.addcar.data.CarItemOptionUpsertDraft
 import com.tx.carrecord.feature.addcar.data.CarRepository
@@ -160,6 +163,7 @@ class AddCarViewModel @Inject constructor(
     private val carRepository: CarRepository,
     private val appDateContext: AppDateContext,
     private val maintenanceDataChangeContext: MaintenanceDataChangeContext,
+    private val appLogger: AppLogger,
 ) : ViewModel() {
     private val zoneId: ZoneId = ZoneId.systemDefault()
 
@@ -622,8 +626,16 @@ class AddCarViewModel @Inject constructor(
     fun confirmDeleteCar() {
         val deletingCar = _uiState.value.pendingDeleteCar ?: return
         viewModelScope.launch {
+            appLogger.info(
+                "开始删除车辆",
+                payload = "carId=${deletingCar.id}, brand=${deletingCar.brand}, modelName=${deletingCar.modelName}",
+            )
             when (val result = carRepository.deleteCar(deletingCar.id)) {
                 is RepositoryResult.Success -> {
+                    appLogger.info(
+                        "删除车辆完成",
+                        payload = "carId=${result.value.carId}, normalizedRawAppliedCarId=${result.value.normalizedRawAppliedCarId}",
+                    )
                     _uiState.value = _uiState.value.copy(
                         pendingDeleteCar = null,
                         appliedCarId = result.value.normalizedRawAppliedCarId,
@@ -632,6 +644,10 @@ class AddCarViewModel @Inject constructor(
                 }
 
                 is RepositoryResult.Failure -> {
+                    appLogger.error(
+                        message = "删除车辆失败",
+                        payload = result.error.message,
+                    )
                     _uiState.value = _uiState.value.copy(
                         pendingDeleteCar = null,
                         message = result.error.message,
@@ -1514,18 +1530,18 @@ private fun ItemRuleEditDialog(
 ) {
     var name by remember(draft.id) { mutableStateOf(draft.name) }
     var remindByMileage by remember(draft.id) { mutableStateOf(draft.remindByMileage) }
-    var mileageInterval by remember(draft.id) { mutableStateOf(draft.mileageInterval.coerceAtLeast(5000)) }
+    var mileageInterval by remember(draft.id) { mutableStateOf(draft.mileageInterval) }
     var remindByTime by remember(draft.id) { mutableStateOf(draft.remindByTime) }
     var yearInterval by remember(draft.id) {
-        mutableStateOf((draft.monthInterval.coerceAtLeast(1) / 12.0).coerceAtLeast(0.5))
+        mutableStateOf(draft.monthInterval / 12.0)
     }
     var validationMessage by remember(draft.id) { mutableStateOf<String?>(null) }
     val restoredDefaults = onRestoreDefaults?.invoke()
     val currentDraft = draft.copy(
         remindByMileage = remindByMileage,
-        mileageInterval = if (remindByMileage) mileageInterval.coerceIn(5000, 500_000) else 0,
+        mileageInterval = if (remindByMileage) mileageInterval else 0,
         remindByTime = remindByTime,
-        monthInterval = if (remindByTime) (yearInterval * 12).roundToInt().coerceAtLeast(1) else 0,
+        monthInterval = if (remindByTime) (yearInterval * 12).roundToInt() else 0,
     )
     val canRestoreDefaultsNow = restoredDefaults != null &&
         canRestoreItemDraftDefaults(
@@ -1537,113 +1553,118 @@ private fun ItemRuleEditDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = title) },
         text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "项目名称",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
-                        )
-                        if (canEditName) {
-                            OutlinedTextField(
-                                value = name,
-                                onValueChange = { name = it },
-                                label = { Text("请输入项目名称") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            Text(
-                                text = name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    HorizontalDivider()
-
+                Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(
-                            text = "提醒方式",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                text = "按里程提醒",
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = "项目名称",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                             )
-                            Switch(
-                                checked = remindByMileage,
-                                onCheckedChange = { remindByMileage = it },
-                            )
-                        }
-                        if (remindByMileage) {
-                            NumberAdjustRow(
-                                label = "里程间隔",
-                                value = mileageInterval,
-                                step = 5000,
-                                minValue = 5000,
-                                maxValue = 500_000,
-                                valueText = ::reminderDistanceText,
-                                onValueChange = { mileageInterval = it },
-                            )
+                            if (canEditName) {
+                                OutlinedTextField(
+                                    value = name,
+                                    onValueChange = { name = it },
+                                    label = { Text("请输入项目名称") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            } else {
+                                Text(
+                                    text = name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "按时间提醒",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Switch(
-                                checked = remindByTime,
-                                onCheckedChange = { remindByTime = it },
-                            )
-                        }
-                                if (remindByTime) {
-                                    YearAdjustRow(
-                                        label = "时间间隔",
-                                        value = yearInterval,
-                                        step = 0.5,
-                                        minValue = 0.5,
-                                        maxValue = 10.0,
-                                        onValueChange = { yearInterval = it },
-                            )
-                        }
-                    }
-
-                    if (onRestoreDefaults != null) {
                         HorizontalDivider()
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            FilledTonalButton(
-                                onClick = {
-                                    restoredDefaults?.let { restored ->
-                                        name = restored.name
-                                        remindByMileage = restored.remindByMileage
-                                        mileageInterval = restored.mileageInterval.coerceAtMost(500_000).coerceAtLeast(5000)
-                                        remindByTime = restored.remindByTime
-                                        yearInterval = (restored.monthInterval.coerceAtLeast(1) / 12.0).coerceAtLeast(0.5)
-                                    }
-                                },
-                                enabled = canRestoreDefaultsNow,
+
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                text = "提醒方式",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(text = "恢复默认值")
+                                Text(
+                                    text = "按里程提醒",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Switch(
+                                    checked = remindByMileage,
+                                    onCheckedChange = { remindByMileage = it },
+                                )
+                            }
+                            if (remindByMileage) {
+                                NumberAdjustRow(
+                                    label = "里程间隔",
+                                    value = mileageInterval,
+                                    minValue = 1_000,
+                                    maxValue = 500_000,
+                                    valueText = ::reminderDistanceText,
+                                    onValueChange = { mileageInterval = it },
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "按时间提醒",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Switch(
+                                    checked = remindByTime,
+                                    onCheckedChange = { remindByTime = it },
+                                )
+                            }
+                            if (remindByTime) {
+                                YearAdjustRow(
+                                    label = "时间间隔",
+                                    value = yearInterval,
+                                    minValue = 0.5,
+                                    maxValue = 20.0,
+                                    onValueChange = { yearInterval = it },
+                                )
+                            }
+                        }
+
+                        if (onRestoreDefaults != null) {
+                            HorizontalDivider()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        restoredDefaults?.let { restored ->
+                                            name = restored.name
+                                            remindByMileage = restored.remindByMileage
+                                            mileageInterval = restored.mileageInterval
+                                            remindByTime = restored.remindByTime
+                                            yearInterval = restored.monthInterval / 12.0
+                                        }
+                                    },
+                                    enabled = canRestoreDefaultsNow,
+                                ) {
+                                    Text(text = "恢复默认值")
+                                }
                             }
                         }
                     }
@@ -1665,9 +1686,9 @@ private fun ItemRuleEditDialog(
                     val candidate = draft.copy(
                         name = normalizedName,
                         remindByMileage = remindByMileage,
-                        mileageInterval = if (remindByMileage) mileageInterval.coerceIn(5000, 500_000) else 0,
+                        mileageInterval = if (remindByMileage) mileageInterval else 0,
                         remindByTime = remindByTime,
-                        monthInterval = if (remindByTime) (yearInterval * 12).roundToInt().coerceAtLeast(1) else 0,
+                        monthInterval = if (remindByTime) (yearInterval * 12).roundToInt() else 0,
                         warningStartPercent = MaintenanceItemConfig.warningRangeStartPercent,
                         dangerStartPercent = MaintenanceItemConfig.dangerStartPercent,
                     )
@@ -1709,34 +1730,27 @@ private fun ItemRuleEditDialog(
 private fun NumberAdjustRow(
     label: String,
     value: Int,
-    step: Int,
     minValue: Int,
     maxValue: Int,
     valueText: (Int) -> String = { it.toString() },
     onValueChange: (Int) -> Unit,
 ) {
+    val step = mileageAdjustStep(value)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "$label：${valueText(value)}")
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilledTonalButton(
-                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
-            ) {
-                Text(text = "-")
-            }
-            FilledTonalButton(
-                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
-            ) {
-                Text(text = "+")
-            }
-        }
+        Text(
+            text = "$label：${valueText(value)}",
+            modifier = Modifier.widthIn(max = 180.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        AdjustButtonGroup(
+            onDecrease = { onValueChange((value - step).coerceAtLeast(minValue)) },
+            onIncrease = { onValueChange((value + step).coerceAtMost(maxValue)) },
+        )
     }
 }
 
@@ -1744,32 +1758,74 @@ private fun NumberAdjustRow(
 private fun YearAdjustRow(
     label: String,
     value: Double,
-    step: Double,
     minValue: Double,
     maxValue: Double,
     onValueChange: (Double) -> Unit,
 ) {
+    val step = yearAdjustStep(value)
     val displayText = yearIntervalText(value)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "$label：$displayText")
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilledTonalButton(
-                onClick = { onValueChange((value - step).coerceAtLeast(minValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
+        Text(
+            text = "$label：$displayText",
+            modifier = Modifier.widthIn(max = 180.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        AdjustButtonGroup(
+            onDecrease = { onValueChange((value - step).coerceAtLeast(minValue)) },
+            onIncrease = { onValueChange((value + step).coerceAtMost(maxValue)) },
+        )
+    }
+}
+
+private fun mileageAdjustStep(value: Int): Int {
+    return if (value <= 10_000) 1_000 else 5_000
+}
+
+private fun yearAdjustStep(value: Double): Double {
+    return if (value <= 5.0) 0.5 else 1.0
+}
+
+@Composable
+private fun AdjustButtonGroup(
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = onDecrease,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier
+                    .width(38.dp)
+                    .defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                    .height(28.dp),
             ) {
-                Text(text = "-")
+                Text(text = "-", style = MaterialTheme.typography.titleMedium)
             }
-            FilledTonalButton(
-                onClick = { onValueChange((value + step).coerceAtMost(maxValue)) },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp),
+            Box(
+                modifier = Modifier
+                    .height(12.dp)
+                    .widthIn(min = 1.dp, max = 1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
+            TextButton(
+                onClick = onIncrease,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier
+                    .width(38.dp)
+                    .defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                    .height(28.dp),
             ) {
-                Text(text = "+")
+                Text(text = "+", style = MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -1797,9 +1853,9 @@ private fun restoreItemDraftDefaults(
     return draft.copy(
         name = definition.defaultName,
         remindByMileage = definition.remindByMileage,
-        mileageInterval = (definition.mileageInterval ?: 5000).coerceAtLeast(5000),
+        mileageInterval = definition.mileageInterval ?: 1_000,
         remindByTime = definition.remindByTime,
-        monthInterval = (definition.monthInterval ?: 12).coerceAtLeast(1),
+        monthInterval = definition.monthInterval ?: 12,
         warningStartPercent = definition.warningStartPercent,
         dangerStartPercent = definition.dangerStartPercent,
     )
@@ -1815,9 +1871,9 @@ private fun canRestoreItemDraftDefaults(
 private fun normalizedItemDraftRestoreComparable(draft: ItemRuleDraft): List<Any> {
     return listOf(
         draft.remindByMileage,
-        if (draft.remindByMileage) draft.mileageInterval.coerceAtLeast(5000) else 0,
+        if (draft.remindByMileage) draft.mileageInterval else 0,
         draft.remindByTime,
-        if (draft.remindByTime) draft.monthInterval.coerceAtLeast(1) else 0,
+        if (draft.remindByTime) draft.monthInterval else 0,
     )
 }
 
